@@ -2,7 +2,7 @@
   "functions": [
     {
       "source": "functions",
-      "codebase": "default",
+      "codebase": "line-bot",
       "runtime": "nodejs20",
       "ignore": [
         "node_modules",
