@@ -7,23 +7,20 @@ admin.initializeApp();
 
 const app = express();
 
-// LINE bot 設定
-const channelAccessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN;
-const channelSecret = process.env.LINE_CHANNEL_SECRET;
-
-if (!channelAccessToken || !channelSecret) {
-  console.error('LINE_CHANNEL_ACCESS_TOKEN or LINE_CHANNEL_SECRET is not set');
+// 延遲建立 LINE client（只在第一次收到 webhook 時建立）
+let lineClient = null;
+function getLineClient() {
+  if (!lineClient) {
+    lineClient = new line.Client({
+      channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || '',
+      channelSecret: process.env.LINE_CHANNEL_SECRET || '',
+    });
+  }
+  return lineClient;
 }
 
-const lineClient = new line.Client({
-  channelAccessToken: channelAccessToken,
-  channelSecret: channelSecret,
-});
-
 // Webhook endpoint
-app.post('/webhook', line.middleware({
-  channelSecret: channelSecret,
-}), async (req, res) => {
+app.post('/webhook', async (req, res) => {
   try {
     const events = req.body.events;
     
@@ -31,10 +28,11 @@ app.post('/webhook', line.middleware({
       return res.json({ ok: true });
     }
     
+    const client = getLineClient();
+    
     for (const event of events) {
       if (event.type === 'message' && event.message.type === 'text') {
-        // 有人傳文字訊息時
-        await lineClient.replyMessage(event.replyToken, {
+        await client.replyMessage(event.replyToken, {
           type: 'text',
           text: 'Hello! 我是你的 HR Bot 🤖',
         });
