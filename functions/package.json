@@ -1,0 +1,16 @@
+{
+  "name": "line-bot-webhook",
+  "version": "1.0.0",
+  "description": "LINE bot webhook",
+  "main": "index.js",
+  "scripts": {
+    "serve": "firebase emulators:start --only functions",
+    "deploy": "firebase deploy --only functions"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.0.0",
+    "firebase-functions": "^4.0.0",
+    "@line/bot-sdk": "^7.0.0",
+    "express": "^4.18.0"
+  }
+}
