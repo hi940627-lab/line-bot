@@ -7,18 +7,29 @@ admin.initializeApp();
 
 const app = express();
 
-// LINE bot 設定（待會要改這裡）
+// LINE bot 設定
+const channelAccessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+const channelSecret = process.env.LINE_CHANNEL_SECRET;
+
+if (!channelAccessToken || !channelSecret) {
+  console.error('LINE_CHANNEL_ACCESS_TOKEN or LINE_CHANNEL_SECRET is not set');
+}
+
 const lineClient = new line.Client({
-  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
-  channelSecret: process.env.LINE_CHANNEL_SECRET,
+  channelAccessToken: channelAccessToken,
+  channelSecret: channelSecret,
 });
 
 // Webhook endpoint
 app.post('/webhook', line.middleware({
-  channelSecret: process.env.LINE_CHANNEL_SECRET,
+  channelSecret: channelSecret,
 }), async (req, res) => {
   try {
     const events = req.body.events;
+    
+    if (!events) {
+      return res.json({ ok: true });
+    }
     
     for (const event of events) {
       if (event.type === 'message' && event.message.type === 'text') {
@@ -37,4 +48,6 @@ app.post('/webhook', line.middleware({
 });
 
 // Cloud Function 導出
-exports.lineWebhook = functions.https.onRequest(app);
+exports.lineWebhook = functions
+  .region('asia-east1')
+  .https.onRequest(app);
