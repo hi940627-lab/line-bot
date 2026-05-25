@@ -1,4 +1,4 @@
-const functions = require('firebase-functions');
+const { onRequest } = require('firebase-functions/v2/https');
 const admin = require('firebase-admin');
 const line = require('@line/bot-sdk');
 const express = require('express');
@@ -7,7 +7,7 @@ admin.initializeApp();
 
 const app = express();
 
-// 延遲建立 LINE client（只在第一次收到 webhook 時建立）
+// 延遲建立 LINE client
 let lineClient = null;
 function getLineClient() {
   if (!lineClient) {
@@ -45,7 +45,7 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// Cloud Function 導出
-exports.lineWebhook = functions
-  .region('asia-east1')
-  .https.onRequest(app);
+// Cloud Function v2 寫法
+exports.lineWebhook = onRequest({
+  region: 'asia-east1',
+}, app);
