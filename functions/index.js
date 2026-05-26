@@ -36,17 +36,18 @@ function findLeaveType(name) {
 
 // ===== 配色 =====
 const COLOR = {
-  headerMenu:    '#7E57C2', // 紫 - 主選單
-  headerSelect:  '#3F51B5', // 深藍 - 選假別
-  headerConfirm: '#FF9800', // 橘黃 - 確認
-  headerReview:  '#F44336', // 紅 - 主管審核(2b 用)
+  headerMenu:    '#7E57C2',
+  headerSelect:  '#3F51B5',
+  headerConfirm: '#FF9800',
+  headerReview:  '#F44336',
+  headerResult:  '#2196F3', // 藍 - 員工收到的審核結果
   submit:        '#4CAF50',
   cancel:        '#9E9E9E',
   reject:        '#E53935',
-  disabled:      '#BDBDBD', // 灰 - 敬請期待
+  disabled:      '#BDBDBD',
 };
 
-// ===== Quick Reply 主選單按鈕(附在所有非流程訊息底下) =====
+// ===== Quick Reply =====
 const MAIN_QUICK_REPLY = {
   items: [
     { type: 'action', action: { type: 'message', label: '📝 請假', text: '請假' } },
@@ -55,6 +56,13 @@ const MAIN_QUICK_REPLY = {
     { type: 'action', action: { type: 'message', label: '📋 主選單', text: '選單' } },
   ],
 };
+
+// ===== 星期幾(中文) =====
+const WEEKDAYS = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
+function formatDateWithWeekday(dateStr) {
+  const d = new Date(dateStr);
+  return `${dateStr} (${WEEKDAYS[d.getDay()]})`;
+}
 
 // ===== 訊息工具 =====
 async function replyText(client, replyToken, text, withMenu = true) {
@@ -67,7 +75,6 @@ async function replyMessages(client, replyToken, messages) {
   await client.replyMessage({ replyToken, messages });
 }
 
-// 把 Quick Reply 加到最後一則訊息
 function attachMenuQR(messages) {
   if (messages.length > 0) {
     messages[messages.length - 1].quickReply = MAIN_QUICK_REPLY;
@@ -75,14 +82,37 @@ function attachMenuQR(messages) {
   return messages;
 }
 
+// ===== 主動推播 =====
+async function pushMessages(client, toUserId, messages) {
+  try {
+    await client.pushMessage({ to: toUserId, messages });
+    return true;
+  } catch (err) {
+    console.error(`Push to ${toUserId} failed:`, err.message);
+    return false;
+  }
+}
+
 // ===== 算審核人 =====
-async function getApprovers(employeeData) {
+async function getApprovers(employeeData, employeeName) {
   if (employeeData.role === 'admin') return [];
   if (employeeData.role === 'manager') {
     const adminsSnap = await db.collection('employees').where('role', '==', 'admin').get();
-    return adminsSnap.docs.map(d => d.id);
+    // 排除自己(保險:不能自己審自己)
+    return adminsSnap.docs.map(d => d.id).filter(name => name !== employeeName);
   }
-  return employeeData.supervisor ? [employeeData.supervisor] : [];
+  // 一般員工:supervisor,且排除自己
+  if (employeeData.supervisor && employeeData.supervisor !== employeeName) {
+    return [employeeData.supervisor];
+  }
+  return [];
+}
+
+// ===== 從員工姓名查 lineUserId =====
+async function getLineUserIdByName(employeeName) {
+  const snap = await db.collection('employees').doc(employeeName).get();
+  if (!snap.exists) return null;
+  return snap.data().lineUserId || null;
 }
 
 // ===== 卡片:主選單 =====
@@ -93,39 +123,22 @@ function buildMainMenuFlex(employeeName) {
     contents: {
       type: 'bubble',
       header: {
-        type: 'box',
-        layout: 'vertical',
-        backgroundColor: COLOR.headerMenu,
-        paddingAll: '16px',
+        type: 'box', layout: 'vertical',
+        backgroundColor: COLOR.headerMenu, paddingAll: '16px',
         contents: [
           { type: 'text', text: `👋 您好,${employeeName}`, weight: 'bold', size: 'lg', color: '#FFFFFF' },
           { type: 'text', text: 'HR Bot 服務選單', size: 'sm', color: '#FFFFFFCC', margin: 'sm' },
         ],
       },
       body: {
-        type: 'box',
-        layout: 'vertical',
-        spacing: 'md',
-        paddingAll: '16px',
+        type: 'box', layout: 'vertical', spacing: 'md', paddingAll: '16px',
         contents: [
-          {
-            type: 'button',
-            style: 'primary',
-            color: COLOR.submit,
-            action: { type: 'message', label: '📝 請假申請', text: '請假' },
-          },
-          {
-            type: 'button',
-            style: 'primary',
-            color: COLOR.disabled,
-            action: { type: 'message', label: '🏥 體檢(敬請期待)', text: '體檢' },
-          },
-          {
-            type: 'button',
-            style: 'primary',
-            color: COLOR.disabled,
-            action: { type: 'message', label: '💪 體能(敬請期待)', text: '體能' },
-          },
+          { type: 'button', style: 'primary', color: COLOR.submit,
+            action: { type: 'message', label: '📝 請假申請', text: '請假' } },
+          { type: 'button', style: 'primary', color: COLOR.disabled,
+            action: { type: 'message', label: '🏥 體檢(敬請期待)', text: '體檢' } },
+          { type: 'button', style: 'primary', color: COLOR.disabled,
+            action: { type: 'message', label: '💪 體能(敬請期待)', text: '體能' } },
         ],
       },
     },
@@ -140,25 +153,17 @@ function buildLeaveTypeFlex() {
     contents: {
       type: 'bubble',
       header: {
-        type: 'box',
-        layout: 'vertical',
-        backgroundColor: COLOR.headerSelect,
-        paddingAll: '16px',
+        type: 'box', layout: 'vertical',
+        backgroundColor: COLOR.headerSelect, paddingAll: '16px',
         contents: [
           { type: 'text', text: '📝 請假申請', weight: 'bold', size: 'lg', color: '#FFFFFF' },
           { type: 'text', text: '請選擇假別', size: 'sm', color: '#FFFFFFCC', margin: 'sm' },
         ],
       },
       body: {
-        type: 'box',
-        layout: 'vertical',
-        spacing: 'sm',
-        paddingAll: '12px',
+        type: 'box', layout: 'vertical', spacing: 'sm', paddingAll: '12px',
         contents: LEAVE_TYPES.map(t => ({
-          type: 'button',
-          style: 'primary',
-          height: 'sm',
-          color: t.color,
+          type: 'button', style: 'primary', height: 'sm', color: t.color,
           action: {
             type: 'postback',
             label: `${t.emoji} ${t.name}`,
@@ -178,14 +183,8 @@ function buildDatePickerMessage(text, postbackData) {
     text,
     quickReply: {
       items: [
-        {
-          type: 'action',
-          action: { type: 'datetimepicker', label: '📅 選日期', data: postbackData, mode: 'date' },
-        },
-        {
-          type: 'action',
-          action: { type: 'postback', label: '❌ 取消', data: 'action=cancel' },
-        },
+        { type: 'action', action: { type: 'datetimepicker', label: '📅 選日期', data: postbackData, mode: 'date' } },
+        { type: 'action', action: { type: 'postback', label: '❌ 取消', data: 'action=cancel' } },
       ],
     },
   };
@@ -200,56 +199,141 @@ function buildConfirmFlex(data) {
     contents: {
       type: 'bubble',
       header: {
-        type: 'box',
-        layout: 'vertical',
-        backgroundColor: COLOR.headerConfirm,
-        paddingAll: '16px',
+        type: 'box', layout: 'vertical',
+        backgroundColor: COLOR.headerConfirm, paddingAll: '16px',
         contents: [
           { type: 'text', text: '📋 確認假單', weight: 'bold', size: 'lg', color: '#FFFFFF' },
         ],
       },
       body: {
-        type: 'box',
-        layout: 'vertical',
-        spacing: 'md',
-        paddingAll: '16px',
+        type: 'box', layout: 'vertical', spacing: 'md', paddingAll: '16px',
         contents: [
-          {
-            type: 'box', layout: 'vertical', spacing: 'xs', contents: [
-              { type: 'text', text: '📅 假別', size: 'xs', color: '#888888' },
-              { type: 'text', text: `${t.emoji} ${data.type}`, size: 'md', weight: 'bold' },
-            ],
-          },
+          { type: 'box', layout: 'vertical', spacing: 'xs', contents: [
+            { type: 'text', text: '📅 假別', size: 'xs', color: '#888888' },
+            { type: 'text', text: `${t.emoji} ${data.type}`, size: 'md', weight: 'bold' },
+          ]},
           { type: 'separator' },
-          {
-            type: 'box', layout: 'vertical', spacing: 'xs', contents: [
-              { type: 'text', text: '⏰ 日期', size: 'xs', color: '#888888' },
-              { type: 'text', text: `${data.startDate} ~ ${data.endDate}`, size: 'md', weight: 'bold' },
-            ],
-          },
+          { type: 'box', layout: 'vertical', spacing: 'xs', contents: [
+            { type: 'text', text: '⏰ 日期', size: 'xs', color: '#888888' },
+            { type: 'text', text: formatDateWithWeekday(data.startDate), size: 'md', weight: 'bold', wrap: true },
+            { type: 'text', text: `~ ${formatDateWithWeekday(data.endDate)}`, size: 'md', weight: 'bold', wrap: true },
+          ]},
           { type: 'separator' },
-          {
-            type: 'box', layout: 'vertical', spacing: 'xs', contents: [
-              { type: 'text', text: '📆 天數', size: 'xs', color: '#888888' },
-              { type: 'text', text: `${data.days} 天`, size: 'md', weight: 'bold' },
-            ],
-          },
+          { type: 'box', layout: 'vertical', spacing: 'xs', contents: [
+            { type: 'text', text: '📆 天數', size: 'xs', color: '#888888' },
+            { type: 'text', text: `${data.days} 天`, size: 'md', weight: 'bold' },
+          ]},
         ],
       },
       footer: {
-        type: 'box',
-        layout: 'horizontal',
-        spacing: 'sm',
-        paddingAll: '12px',
+        type: 'box', layout: 'horizontal', spacing: 'sm', paddingAll: '12px',
         contents: [
-          {
-            type: 'button', style: 'primary', color: COLOR.cancel,
-            action: { type: 'postback', label: '❌ 取消', data: 'action=cancel' },
-          },
-          {
-            type: 'button', style: 'primary', color: COLOR.submit,
-            action: { type: 'postback', label: '✅ 送出', data: 'action=submit' },
-          },
+          { type: 'button', style: 'primary', color: COLOR.cancel,
+            action: { type: 'postback', label: '❌ 取消', data: 'action=cancel' } },
+          { type: 'button', style: 'primary', color: COLOR.submit,
+            action: { type: 'postback', label: '✅ 送出', data: 'action=submit' } },
+        ],
+      },
+    },
+  };
+}
+
+// ===== 卡片:主管審核 =====
+function buildReviewFlex(requestId, requestData) {
+  const t = findLeaveType(requestData.type);
+  return {
+    type: 'flex',
+    altText: `新假單待審核:${requestData.employeeName} - ${requestData.type} ${requestData.days}天`,
+    contents: {
+      type: 'bubble',
+      header: {
+        type: 'box', layout: 'vertical',
+        backgroundColor: COLOR.headerReview, paddingAll: '16px',
+        contents: [
+          { type: 'text', text: '🔔 新假單待審核', weight: 'bold', size: 'lg', color: '#FFFFFF' },
+        ],
+      },
+      body: {
+        type: 'box', layout: 'vertical', spacing: 'md', paddingAll: '16px',
+        contents: [
+          { type: 'box', layout: 'vertical', spacing: 'xs', contents: [
+            { type: 'text', text: '👤 申請人', size: 'xs', color: '#888888' },
+            { type: 'text', text: requestData.employeeName, size: 'md', weight: 'bold' },
+          ]},
+          { type: 'separator' },
+          { type: 'box', layout: 'vertical', spacing: 'xs', contents: [
+            { type: 'text', text: '📅 假別', size: 'xs', color: '#888888' },
+            { type: 'text', text: `${t.emoji} ${requestData.type}`, size: 'md', weight: 'bold' },
+          ]},
+          { type: 'separator' },
+          { type: 'box', layout: 'vertical', spacing: 'xs', contents: [
+            { type: 'text', text: '⏰ 日期', size: 'xs', color: '#888888' },
+            { type: 'text', text: formatDateWithWeekday(requestData.startDate), size: 'md', weight: 'bold', wrap: true },
+            { type: 'text', text: `~ ${formatDateWithWeekday(requestData.endDate)}`, size: 'md', weight: 'bold', wrap: true },
+          ]},
+          { type: 'separator' },
+          { type: 'box', layout: 'vertical', spacing: 'xs', contents: [
+            { type: 'text', text: '📆 天數', size: 'xs', color: '#888888' },
+            { type: 'text', text: `${requestData.days} 天`, size: 'md', weight: 'bold' },
+          ]},
+        ],
+      },
+      footer: {
+        type: 'box', layout: 'horizontal', spacing: 'sm', paddingAll: '12px',
+        contents: [
+          { type: 'button', style: 'primary', color: COLOR.reject,
+            action: { type: 'postback', label: '❌ 駁回', data: `action=reject&id=${requestId}` } },
+          { type: 'button', style: 'primary', color: COLOR.submit,
+            action: { type: 'postback', label: '✅ 核准', data: `action=approve&id=${requestId}` } },
+        ],
+      },
+    },
+  };
+}
+
+// ===== 卡片:員工收到的審核結果 =====
+function buildResultFlex(requestData, approved, reviewerName) {
+  const t = findLeaveType(requestData.type);
+  const statusEmoji = approved ? '✅' : '❌';
+  const statusText = approved ? '已核准' : '已駁回';
+  const headerColor = approved ? COLOR.submit : COLOR.reject;
+  const altPrefix = approved ? '✅' : '❌';
+
+  return {
+    type: 'flex',
+    altText: `${altPrefix} 您的${requestData.type}${statusText}(${requestData.startDate}~${requestData.endDate})`,
+    contents: {
+      type: 'bubble',
+      header: {
+        type: 'box', layout: 'vertical',
+        backgroundColor: headerColor, paddingAll: '16px',
+        contents: [
+          { type: 'text', text: `${statusEmoji} 假單${statusText}`, weight: 'bold', size: 'lg', color: '#FFFFFF' },
+        ],
+      },
+      body: {
+        type: 'box', layout: 'vertical', spacing: 'md', paddingAll: '16px',
+        contents: [
+          { type: 'box', layout: 'vertical', spacing: 'xs', contents: [
+            { type: 'text', text: '📅 假別', size: 'xs', color: '#888888' },
+            { type: 'text', text: `${t.emoji} ${requestData.type}`, size: 'md', weight: 'bold' },
+          ]},
+          { type: 'separator' },
+          { type: 'box', layout: 'vertical', spacing: 'xs', contents: [
+            { type: 'text', text: '⏰ 日期', size: 'xs', color: '#888888' },
+            { type: 'text', text: formatDateWithWeekday(requestData.startDate), size: 'md', weight: 'bold', wrap: true },
+            { type: 'text', text: `~ ${formatDateWithWeekday(requestData.endDate)}`, size: 'md', weight: 'bold', wrap: true },
+          ]},
+          { type: 'separator' },
+          { type: 'box', layout: 'vertical', spacing: 'xs', contents: [
+            { type: 'text', text: '📆 天數', size: 'xs', color: '#888888' },
+            { type: 'text', text: `${requestData.days} 天`, size: 'md', weight: 'bold' },
+          ]},
+          { type: 'separator' },
+          { type: 'box', layout: 'vertical', spacing: 'xs', contents: [
+            { type: 'text', text: '👤 審核人', size: 'xs', color: '#888888' },
+            { type: 'text', text: reviewerName, size: 'md', weight: 'bold' },
+          ]},
         ],
       },
     },
@@ -269,28 +353,70 @@ async function startLeaveFlow(client, replyToken, bindingRef) {
   await bindingRef.update({
     currentFlow: { type: 'leave', step: 'selectType', data: {} },
   });
-  // 流程中不附 Quick Reply
   await replyMessages(client, replyToken, [buildLeaveTypeFlex()]);
 }
 
-// ===== 取消流程 =====
 async function cancelFlow(client, replyToken, bindingRef) {
-  await bindingRef.update({
-    currentFlow: admin.firestore.FieldValue.delete(),
-  });
+  await bindingRef.update({ currentFlow: admin.firestore.FieldValue.delete() });
   await replyText(client, replyToken, '已取消 ❌');
+}
+
+// ===== 通知審核人 =====
+async function notifyApprovers(client, requestId, requestData, approverNames) {
+  const failedNames = [];
+  let sentCount = 0;
+
+  for (const approverName of approverNames) {
+    const lineUserId = await getLineUserIdByName(approverName);
+    if (!lineUserId) {
+      failedNames.push(approverName);
+      continue;
+    }
+    const ok = await pushMessages(client, lineUserId, [
+      buildReviewFlex(requestId, requestData),
+    ]);
+    if (ok) sentCount++;
+    else failedNames.push(approverName);
+  }
+
+  return { sentCount, failedNames };
 }
 
 // ===== 送出假單 =====
 async function submitLeave(client, replyToken, bindingRef, employeeName, data) {
   const empSnap = await db.collection('employees').doc(employeeName).get();
   const empData = empSnap.data();
-  const approvers = await getApprovers(empData);
-
+  const approvers = await getApprovers(empData, employeeName);
   const isAdmin = empData.role === 'admin';
-  const status = isAdmin ? 'approved' : 'pending';
 
-  await db.collection('leaveRequests').add({
+  // 檢查審核人都綁定了
+  if (!isAdmin) {
+    if (approvers.length === 0) {
+      await bindingRef.update({ currentFlow: admin.firestore.FieldValue.delete() });
+      await replyText(
+        client, replyToken,
+        '❌ 無法送出\n\n找不到您的審核人,請聯絡 HR'
+      );
+      return;
+    }
+    const unboundNames = [];
+    for (const name of approvers) {
+      const lineUserId = await getLineUserIdByName(name);
+      if (!lineUserId) unboundNames.push(name);
+    }
+    if (unboundNames.length > 0) {
+      await bindingRef.update({ currentFlow: admin.firestore.FieldValue.delete() });
+      await replyText(
+        client, replyToken,
+        `❌ 無法送出\n\n您的審核人尚未綁定 LINE Bot:\n${unboundNames.join('、')}\n\n請聯絡 HR 協助`
+      );
+      return;
+    }
+  }
+
+  // 寫入假單
+  const status = isAdmin ? 'approved' : 'pending';
+  const newDocRef = await db.collection('leaveRequests').add({
     employeeName,
     type: data.type,
     startDate: data.startDate,
@@ -305,16 +431,119 @@ async function submitLeave(client, replyToken, bindingRef, employeeName, data) {
 
   await bindingRef.update({ currentFlow: admin.firestore.FieldValue.delete() });
 
-  const msg = isAdmin
-    ? '假單已自動核准 ✅(管理員不需審核)'
-    : '假單已送出 ⏳ 正在等待審核';
-  await replyText(client, replyToken, msg);
+  if (isAdmin) {
+    await replyText(client, replyToken, '假單已自動核准 ✅(管理員不需審核)');
+    return;
+  }
+
+  // 推播給審核人
+  const requestData = {
+    employeeName,
+    type: data.type,
+    startDate: data.startDate,
+    endDate: data.endDate,
+    days: data.days,
+  };
+  const { sentCount } = await notifyApprovers(client, newDocRef.id, requestData, approvers);
+
+  const approverText = approvers.length === 1
+    ? approvers[0]
+    : `${approvers.join('、')}(誰先審核以誰為準)`;
+
+  await replyText(
+    client, replyToken,
+    `假單已送出 ⏳\n\n審核人:${approverText}\n已通知 ${sentCount}/${approvers.length} 位`
+  );
+}
+
+// ===== 處理核准/駁回 =====
+async function handleReviewPostback(client, event, action, requestId) {
+  const userId = event.source.userId;
+
+  const bindingSnap = await db.collection('lineBindings').doc(userId).get();
+  if (!bindingSnap.exists) {
+    await replyText(client, event.replyToken, '請先綁定帳號', false);
+    return;
+  }
+  const reviewerName = bindingSnap.data().employeeName;
+
+  const requestRef = db.collection('leaveRequests').doc(requestId);
+  const newStatus = action === 'approve' ? 'approved' : 'rejected';
+
+  try {
+    const result = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(requestRef);
+      if (!snap.exists) {
+        return { ok: false, reason: 'notfound' };
+      }
+      const data = snap.data();
+
+      if (data.status !== 'pending') {
+        return { ok: false, reason: 'alreadyDecided', data };
+      }
+
+      if (!data.approvers.includes(reviewerName)) {
+        return { ok: false, reason: 'notApprover', data };
+      }
+
+      // 不能自己審自己(保險)
+      if (data.employeeName === reviewerName) {
+        return { ok: false, reason: 'selfReview', data };
+      }
+
+      tx.update(requestRef, {
+        status: newStatus,
+        decidedBy: reviewerName,
+        decidedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      return { ok: true, data };
+    });
+
+    if (!result.ok) {
+      if (result.reason === 'notfound') {
+        await replyText(client, event.replyToken, '⚠️ 找不到該假單');
+      } else if (result.reason === 'alreadyDecided') {
+        const statusText = result.data.status === 'approved' ? '已被核准' : '已被駁回';
+        await replyText(client, event.replyToken,
+          `⚠️ 此假單${statusText}\n審核人:${result.data.decidedBy}`);
+      } else if (result.reason === 'notApprover') {
+        await replyText(client, event.replyToken, '⚠️ 您不是此假單的審核人');
+      } else if (result.reason === 'selfReview') {
+        await replyText(client, event.replyToken, '⚠️ 不能審核自己的假單');
+      }
+      return;
+    }
+
+    // 成功 → 回覆審核者
+    const t = findLeaveType(result.data.type);
+    const actionText = action === 'approve' ? '已核准 ✅' : '已駁回 ❌';
+    await replyText(
+      client, event.replyToken,
+      `${actionText}\n\n申請人:${result.data.employeeName}\n假別:${t.emoji} ${result.data.type}\n日期:${formatDateWithWeekday(result.data.startDate)} ~ ${formatDateWithWeekday(result.data.endDate)}`
+    );
+
+    // Push 通知員工結果(原 2c)
+    const employeeLineId = await getLineUserIdByName(result.data.employeeName);
+    if (employeeLineId) {
+      await pushMessages(client, employeeLineId, [
+        buildResultFlex(result.data, action === 'approve', reviewerName),
+      ]);
+    }
+  } catch (err) {
+    console.error('Review transaction error:', err);
+    await replyText(client, event.replyToken, '❌ 審核失敗,請稍後再試');
+  }
 }
 
 // ===== 處理 postback =====
 async function handlePostback(client, event) {
   const userId = event.source.userId;
   const params = Object.fromEntries(new URLSearchParams(event.postback.data));
+
+  // 審核(獨立路由)
+  if (params.action === 'approve' || params.action === 'reject') {
+    return handleReviewPostback(client, event, params.action, params.id);
+  }
 
   const bindingRef = db.collection('lineBindings').doc(userId);
   const bindingSnap = await bindingRef.get();
@@ -326,7 +555,6 @@ async function handlePostback(client, event) {
   const employeeName = binding.employeeName;
   const flow = binding.currentFlow;
 
-  // 取消
   if (params.action === 'cancel') {
     if (flow) return cancelFlow(client, event.replyToken, bindingRef);
     await replyText(client, event.replyToken, '沒有進行中的流程');
@@ -338,7 +566,6 @@ async function handlePostback(client, event) {
     return;
   }
 
-  // 選假別
   if (params.action === 'leaveType' && flow.step === 'selectType') {
     const newData = { ...flow.data, type: params.value };
     await bindingRef.update({
@@ -351,7 +578,6 @@ async function handlePostback(client, event) {
     return;
   }
 
-  // 選開始日期
   if (params.action === 'startDate' && flow.step === 'startDate') {
     const startDate = event.postback.params.date;
     const newData = { ...flow.data, startDate };
@@ -359,12 +585,14 @@ async function handlePostback(client, event) {
       currentFlow: { type: 'leave', step: 'endDate', data: newData },
     });
     await replyMessages(client, event.replyToken, [
-      buildDatePickerMessage(`開始日期:${startDate}\n\n請選擇結束日期`, 'action=endDate'),
+      buildDatePickerMessage(
+        `開始日期:${formatDateWithWeekday(startDate)}\n\n請選擇結束日期`,
+        'action=endDate'
+      ),
     ]);
     return;
   }
 
-  // 選結束日期
   if (params.action === 'endDate' && flow.step === 'endDate') {
     const endDate = event.postback.params.date;
     const startDate = flow.data.startDate;
@@ -372,7 +600,7 @@ async function handlePostback(client, event) {
     if (new Date(endDate) < new Date(startDate)) {
       await replyMessages(client, event.replyToken, [
         buildDatePickerMessage(
-          `⚠️ 結束日期不能早於開始日期(${startDate})\n請重新選擇`,
+          `⚠️ 結束日期不能早於開始日期(${formatDateWithWeekday(startDate)})\n請重新選擇`,
           'action=endDate'
         ),
       ]);
@@ -388,7 +616,6 @@ async function handlePostback(client, event) {
     return;
   }
 
-  // 送出
   if (params.action === 'submit' && flow.step === 'confirm') {
     return submitLeave(client, event.replyToken, bindingRef, employeeName, flow.data);
   }
@@ -397,8 +624,7 @@ async function handlePostback(client, event) {
 // ===== follow 事件 =====
 async function handleFollow(client, event) {
   await replyText(
-    client,
-    event.replyToken,
+    client, event.replyToken,
     '您好!我是 HR Bot 🤖\n\n請輸入您的「姓名」完成綁定,例如:王O明',
     false
   );
@@ -412,7 +638,6 @@ async function handleTextMessage(client, event) {
   const bindingRef = db.collection('lineBindings').doc(userId);
   const bindingSnap = await bindingRef.get();
 
-  // === 未綁定 ===
   if (!bindingSnap.exists) {
     const employeeRef = db.collection('employees').doc(text);
     const employeeSnap = await employeeRef.get();
@@ -432,7 +657,6 @@ async function handleTextMessage(client, event) {
     batch.set(bindingRef, { employeeName: text, boundAt: now });
     await batch.commit();
 
-    // 綁定成功 → 跳主選單 + 文字提示
     await replyMessages(client, event.replyToken, attachMenuQR([
       { type: 'text', text: `綁定成功!您好,${text} 👋` },
       buildMainMenuFlex(text),
@@ -440,17 +664,14 @@ async function handleTextMessage(client, event) {
     return;
   }
 
-  // === 已綁定 ===
   const binding = bindingSnap.data();
   const employeeName = binding.employeeName;
   const flow = binding.currentFlow;
 
-  // 取消
   if (text === '取消' && flow) {
     return cancelFlow(client, event.replyToken, bindingRef);
   }
 
-  // 主選單關鍵字
   if (['選單', 'menu', 'Menu', 'MENU', '功能'].includes(text)) {
     await replyMessages(client, event.replyToken, attachMenuQR([
       buildMainMenuFlex(employeeName),
@@ -458,7 +679,6 @@ async function handleTextMessage(client, event) {
     return;
   }
 
-  // 體檢/體能 → 敬請期待
   if (text === '體檢') {
     await replyText(client, event.replyToken, '🏥 體檢功能開發中,敬請期待!');
     return;
@@ -468,23 +688,19 @@ async function handleTextMessage(client, event) {
     return;
   }
 
-  // 請假
   if (text === '請假' || text === '我要請假') {
     return startLeaveFlow(client, event.replyToken, bindingRef);
   }
 
-  // 流程中傳了無關文字
   if (flow && flow.type === 'leave') {
     await replyText(
-      client,
-      event.replyToken,
+      client, event.replyToken,
       '請依照上方按鈕操作,或輸入「取消」結束目前流程',
       false
     );
     return;
   }
 
-  // 預設 → 跳主選單
   await replyMessages(client, event.replyToken, attachMenuQR([
     { type: 'text', text: `您好 ${employeeName} 👋` },
     buildMainMenuFlex(employeeName),
