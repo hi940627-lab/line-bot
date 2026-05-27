@@ -897,4 +897,74 @@ exports.registerUser = onCall({ region: 'asia-east1' }, async (request) => {
     name: empData.name,
     dept: empData.department || '',
   };
+  // ════════════════════════════════════════════════════
+//  lineLogin — LIFF 登入 (HR 網頁呼叫)
+//
+//  輸入: { accessToken: "LIFF access token" }
+//
+//  流程:
+//   1. 用 accessToken 打 LINE Verify API → 拿 lineUserId
+//   2. 查 lineBindings/{lineUserId} 存在嗎? (LINE Bot 守門)
+//   3. 產 Firebase custom token (uid = lineUserId)
+//   4. 回 { customToken, empId, employeeName }
+// ════════════════════════════════════════════════════
+exports.lineLogin = onCall({ region: 'asia-east1' }, async (request) => {
+  const accessToken = (request.data?.accessToken || '').trim();
+  if (!accessToken) {
+    throw new HttpsError('invalid-argument', '缺少 accessToken');
+  }
+
+  // 1. 驗證 access token → 拿 lineUserId
+  const channelSecret = process.env.LINE_LOGIN_CHANNEL_SECRET;
+  if (!channelSecret) {
+    throw new HttpsError('internal', 'LINE_LOGIN_CHANNEL_SECRET 未設定');
+  }
+
+  let lineUserId;
+  try {
+    const verifyRes = await fetch(
+      `https://api.line.me/oauth2/v2.1/verify?access_token=${encodeURIComponent(accessToken)}`
+    );
+    const verifyData = await verifyRes.json();
+
+    // client_id 要跟你的 LINE Login Channel ID 一致
+    if (verifyData.client_id !== '2010216136') {
+      throw new HttpsError('unauthenticated', 'access token 來源不符');
+    }
+    if (verifyData.expires_in <= 0) {
+      throw new HttpsError('unauthenticated', 'access token 已過期');
+    }
+
+    // 用 token 拿 profile
+    const profileRes = await fetch('https://api.line.me/v2/profile', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const profileData = await profileRes.json();
+    lineUserId = profileData.userId;
+  } catch (err) {
+    if (err instanceof HttpsError) throw err;
+    throw new HttpsError('internal', 'LINE API 呼叫失敗');
+  }
+
+  if (!lineUserId) {
+    throw new HttpsError('unauthenticated', '無法取得 LINE userId');
+  }
+
+  // 2. 查 lineBindings — LINE Bot 守門
+  const bindingSnap = await db.collection('lineBindings').doc(lineUserId).get();
+  if (!bindingSnap.exists) {
+    throw new HttpsError('not-found', '請先加入 LINE Bot 並完成綁定');
+  }
+  const bindingData = bindingSnap.data();
+  const empId = bindingData.empId || null;
+
+  // 3. 產 Firebase custom token
+  const customToken = await admin.auth().createCustomToken(lineUserId);
+
+  // 4. 回傳
+  return {
+    customToken,
+    empId,
+    employeeName: bindingData.employeeName || bindingData.name || '',
+  };
 });
