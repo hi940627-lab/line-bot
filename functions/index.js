@@ -897,6 +897,7 @@ exports.registerUser = onCall({ region: 'asia-east1' }, async (request) => {
     name: empData.name,
     dept: empData.department || '',
   };
+  });
   // ════════════════════════════════════════════════════
 //  lineLogin — LIFF 登入 (HR 網頁呼叫)
 //
