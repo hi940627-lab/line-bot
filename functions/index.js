@@ -19,7 +19,7 @@ function getLineClient() {
   return lineClient;
 }
 
-// ===== 假別清單 =====
+// ===== 假別清單 (中文顯示用) =====
 const LEAVE_TYPES = [
   { name: '事假',   emoji: '💼', color: '#9E9E9E' },
   { name: '病假',   emoji: '🤒', color: '#90A4AE' },
@@ -33,6 +33,17 @@ const LEAVE_TYPES = [
 function findLeaveType(name) {
   return LEAVE_TYPES.find(t => t.name === name);
 }
+
+// ===== 假別中→英對照 (寫入 leaves 用) =====
+const LEAVE_TYPE_TO_KEY = {
+  '事假':   'personal',
+  '病假':   'sick',
+  '特休':   'annual',
+  '婚假':   'marriage',
+  '喪假':   'bereavement',
+  '陪產假': 'paternity',
+  '產假':   'maternity',
+};
 
 // ===== 配色 =====
 const COLOR = {
@@ -93,26 +104,42 @@ async function pushMessages(client, toUserId, messages) {
   }
 }
 
-// ===== 算審核人 =====
-async function getApprovers(employeeData, employeeName) {
+// ===== 用姓名查員工 (回傳 { id, data } 或 null) =====
+async function findEmployeeByName(employeeName) {
+  const snap = await db.collection('employees').where('name', '==', employeeName).limit(1).get();
+  if (snap.empty) return null;
+  const doc = snap.docs[0];
+  return { id: doc.id, data: doc.data() };
+}
+
+// ===== 用 empId 查員工 =====
+async function getEmployeeById(empId) {
+  const snap = await db.collection('employees').doc(empId).get();
+  if (!snap.exists) return null;
+  return { id: snap.id, data: snap.data() };
+}
+
+// ===== 算審核人 (回傳 empId 陣列) =====
+async function getApprovers(employeeData, employeeEmpId) {
   if (employeeData.role === 'admin') return [];
   if (employeeData.role === 'manager') {
     const adminsSnap = await db.collection('employees').where('role', '==', 'admin').get();
     // 排除自己(保險:不能自己審自己)
-    return adminsSnap.docs.map(d => d.id).filter(name => name !== employeeName);
+    return adminsSnap.docs.map(d => d.id).filter(id => id !== employeeEmpId);
   }
-  // 一般員工:supervisor,且排除自己
-  if (employeeData.supervisor && employeeData.supervisor !== employeeName) {
-    return [employeeData.supervisor];
+  // 一般員工:supervisor 是姓名,要查出對應的 empId
+  if (employeeData.supervisor) {
+    const sup = await findEmployeeByName(employeeData.supervisor);
+    if (sup && sup.id !== employeeEmpId) return [sup.id];
   }
   return [];
 }
 
-// ===== 從員工姓名查 lineUserId =====
-async function getLineUserIdByName(employeeName) {
-  const snap = await db.collection('employees').doc(employeeName).get();
-  if (!snap.exists) return null;
-  return snap.data().lineUserId || null;
+// ===== 用 empId 取得綁定的 lineUserId =====
+async function getLineUserIdByEmpId(empId) {
+  const emp = await getEmployeeById(empId);
+  if (!emp) return null;
+  return emp.data.lineUserId || null;
 }
 
 // ===== 卡片:主選單 =====
@@ -240,10 +267,10 @@ function buildConfirmFlex(data) {
 
 // ===== 卡片:主管審核 =====
 function buildReviewFlex(requestId, requestData) {
-  const t = findLeaveType(requestData.type);
+  const t = findLeaveType(requestData.typeZh);
   return {
     type: 'flex',
-    altText: `新假單待審核:${requestData.employeeName} - ${requestData.type} ${requestData.days}天`,
+    altText: `新假單待審核:${requestData.empName} - ${requestData.typeZh} ${requestData.days}天`,
     contents: {
       type: 'bubble',
       header: {
@@ -258,12 +285,12 @@ function buildReviewFlex(requestId, requestData) {
         contents: [
           { type: 'box', layout: 'vertical', spacing: 'xs', contents: [
             { type: 'text', text: '👤 申請人', size: 'xs', color: '#888888' },
-            { type: 'text', text: requestData.employeeName, size: 'md', weight: 'bold' },
+            { type: 'text', text: requestData.empName, size: 'md', weight: 'bold' },
           ]},
           { type: 'separator' },
           { type: 'box', layout: 'vertical', spacing: 'xs', contents: [
             { type: 'text', text: '📅 假別', size: 'xs', color: '#888888' },
-            { type: 'text', text: `${t.emoji} ${requestData.type}`, size: 'md', weight: 'bold' },
+            { type: 'text', text: `${t.emoji} ${requestData.typeZh}`, size: 'md', weight: 'bold' },
           ]},
           { type: 'separator' },
           { type: 'box', layout: 'vertical', spacing: 'xs', contents: [
@@ -291,9 +318,9 @@ function buildReviewFlex(requestId, requestData) {
   };
 }
 
-// ===== 卡片:員工收到的審核結果 =====
-function buildResultFlex(requestData, approved, reviewerName) {
-  const t = findLeaveType(requestData.type);
+// ===== 卡片:員工收到的審核結果 (不顯示審核人) =====
+function buildResultFlex(requestData, approved) {
+  const t = findLeaveType(requestData.typeZh);
   const statusEmoji = approved ? '✅' : '❌';
   const statusText = approved ? '已核准' : '已駁回';
   const headerColor = approved ? COLOR.submit : COLOR.reject;
@@ -301,7 +328,7 @@ function buildResultFlex(requestData, approved, reviewerName) {
 
   return {
     type: 'flex',
-    altText: `${altPrefix} 您的${requestData.type}${statusText}(${requestData.startDate}~${requestData.endDate})`,
+    altText: `${altPrefix} 您的${requestData.typeZh}${statusText}(${requestData.startDate}~${requestData.endDate})`,
     contents: {
       type: 'bubble',
       header: {
@@ -316,7 +343,7 @@ function buildResultFlex(requestData, approved, reviewerName) {
         contents: [
           { type: 'box', layout: 'vertical', spacing: 'xs', contents: [
             { type: 'text', text: '📅 假別', size: 'xs', color: '#888888' },
-            { type: 'text', text: `${t.emoji} ${requestData.type}`, size: 'md', weight: 'bold' },
+            { type: 'text', text: `${t.emoji} ${requestData.typeZh}`, size: 'md', weight: 'bold' },
           ]},
           { type: 'separator' },
           { type: 'box', layout: 'vertical', spacing: 'xs', contents: [
@@ -328,11 +355,6 @@ function buildResultFlex(requestData, approved, reviewerName) {
           { type: 'box', layout: 'vertical', spacing: 'xs', contents: [
             { type: 'text', text: '📆 天數', size: 'xs', color: '#888888' },
             { type: 'text', text: `${requestData.days} 天`, size: 'md', weight: 'bold' },
-          ]},
-          { type: 'separator' },
-          { type: 'box', layout: 'vertical', spacing: 'xs', contents: [
-            { type: 'text', text: '👤 審核人', size: 'xs', color: '#888888' },
-            { type: 'text', text: reviewerName, size: 'md', weight: 'bold' },
           ]},
         ],
       },
@@ -361,32 +383,57 @@ async function cancelFlow(client, replyToken, bindingRef) {
   await replyText(client, replyToken, '已取消 ❌');
 }
 
+// ===== 寫 auditLog (跟網頁同 schema) =====
+async function writeAuditLog(action, target, targetName, operator, role) {
+  try {
+    await db.collection('auditLogs').add({
+      action,             // approve / reject
+      target,             // leaves
+      targetName: targetName || '',
+      operator: operator || '',
+      operatorEmail: '',  // LINE Bot 沒 email
+      role: role || 'unknown',
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (e) {
+    console.error('auditLog write fail:', e.message);
+  }
+}
+
 // ===== 通知審核人 =====
-async function notifyApprovers(client, requestId, requestData, approverNames) {
-  const failedNames = [];
+async function notifyApprovers(client, requestId, requestData, approverEmpIds) {
+  const failed = [];
   let sentCount = 0;
 
-  for (const approverName of approverNames) {
-    const lineUserId = await getLineUserIdByName(approverName);
+  for (const approverEmpId of approverEmpIds) {
+    const lineUserId = await getLineUserIdByEmpId(approverEmpId);
     if (!lineUserId) {
-      failedNames.push(approverName);
+      failed.push(approverEmpId);
       continue;
     }
     const ok = await pushMessages(client, lineUserId, [
       buildReviewFlex(requestId, requestData),
     ]);
     if (ok) sentCount++;
-    else failedNames.push(approverName);
+    else failed.push(approverEmpId);
   }
 
-  return { sentCount, failedNames };
+  return { sentCount, failed };
 }
 
 // ===== 送出假單 =====
-async function submitLeave(client, replyToken, bindingRef, employeeName, data) {
-  const empSnap = await db.collection('employees').doc(employeeName).get();
-  const empData = empSnap.data();
-  const approvers = await getApprovers(empData, employeeName);
+async function submitLeave(client, replyToken, bindingRef, binding, data) {
+  const empId = binding.empId;
+  const empName = binding.employeeName;
+
+  const emp = await getEmployeeById(empId);
+  if (!emp) {
+    await bindingRef.update({ currentFlow: admin.firestore.FieldValue.delete() });
+    await replyText(client, replyToken, '❌ 找不到您的員工資料,請聯絡 HR');
+    return;
+  }
+  const empData = emp.data;
+  const approvers = await getApprovers(empData, empId);
   const isAdmin = empData.role === 'admin';
 
   // 檢查審核人都綁定了
@@ -400,9 +447,11 @@ async function submitLeave(client, replyToken, bindingRef, employeeName, data) {
       return;
     }
     const unboundNames = [];
-    for (const name of approvers) {
-      const lineUserId = await getLineUserIdByName(name);
-      if (!lineUserId) unboundNames.push(name);
+    for (const apEmpId of approvers) {
+      const apEmp = await getEmployeeById(apEmpId);
+      if (!apEmp || !apEmp.data.lineUserId) {
+        unboundNames.push(apEmp ? apEmp.data.name : apEmpId);
+      }
     }
     if (unboundNames.length > 0) {
       await bindingRef.update({ currentFlow: admin.firestore.FieldValue.delete() });
@@ -414,41 +463,56 @@ async function submitLeave(client, replyToken, bindingRef, employeeName, data) {
     }
   }
 
-  // 寫入假單
+  // 寫入假單 (leaves collection, 對齊 HR 網頁 schema)
   const status = isAdmin ? 'approved' : 'pending';
-  const newDocRef = await db.collection('leaveRequests').add({
-    employeeName,
-    type: data.type,
+  const typeKey = LEAVE_TYPE_TO_KEY[data.type] || data.type;
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  const leaveDoc = {
+    empId,
+    empName,
+    type: typeKey,                // 英文 key,對齊網頁
     startDate: data.startDate,
     endDate: data.endDate,
-    days: data.days,
+    days: String(data.days),      // 網頁存字串("3 天"或"3"),保險用字串
+    reason: '',                   // LINE Bot 沒事由
     status,
-    approvers,
-    decidedBy: null,
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    decidedAt: isAdmin ? admin.firestore.FieldValue.serverTimestamp() : null,
-  });
+    approvers,                    // empId 陣列,網頁忽略,LINE Bot 內部用
+    createdAt: now,
+  };
+  if (isAdmin) leaveDoc.updatedAt = now;
+
+  const newDocRef = await db.collection('leaves').add(leaveDoc);
 
   await bindingRef.update({ currentFlow: admin.firestore.FieldValue.delete() });
 
   if (isAdmin) {
+    // admin 自動核准,寫 auditLog
+    await writeAuditLog('approve', 'leaves', empName, empName, 'admin');
     await replyText(client, replyToken, '假單已自動核准 ✅(管理員不需審核)');
     return;
   }
 
   // 推播給審核人
   const requestData = {
-    employeeName,
-    type: data.type,
+    empId,
+    empName,
+    typeZh: data.type,            // 中文(卡片顯示用)
     startDate: data.startDate,
     endDate: data.endDate,
     days: data.days,
   };
   const { sentCount } = await notifyApprovers(client, newDocRef.id, requestData, approvers);
 
-  const approverText = approvers.length === 1
-    ? approvers[0]
-    : `${approvers.join('、')}(誰先審核以誰為準)`;
+  // 把 approver empId 轉成姓名顯示給員工
+  const approverNames = [];
+  for (const apEmpId of approvers) {
+    const apEmp = await getEmployeeById(apEmpId);
+    if (apEmp) approverNames.push(apEmp.data.name);
+  }
+  const approverText = approverNames.length === 1
+    ? approverNames[0]
+    : `${approverNames.join('、')}(誰先審核以誰為準)`;
 
   await replyText(
     client, replyToken,
@@ -465,9 +529,11 @@ async function handleReviewPostback(client, event, action, requestId) {
     await replyText(client, event.replyToken, '請先綁定帳號', false);
     return;
   }
-  const reviewerName = bindingSnap.data().employeeName;
+  const binding = bindingSnap.data();
+  const reviewerEmpId = binding.empId;
+  const reviewerName = binding.employeeName;
 
-  const requestRef = db.collection('leaveRequests').doc(requestId);
+  const requestRef = db.collection('leaves').doc(requestId);
   const newStatus = action === 'approve' ? 'approved' : 'rejected';
 
   try {
@@ -482,19 +548,19 @@ async function handleReviewPostback(client, event, action, requestId) {
         return { ok: false, reason: 'alreadyDecided', data };
       }
 
-      if (!data.approvers.includes(reviewerName)) {
+      // approvers 是 empId 陣列
+      if (!data.approvers || !data.approvers.includes(reviewerEmpId)) {
         return { ok: false, reason: 'notApprover', data };
       }
 
       // 不能自己審自己(保險)
-      if (data.employeeName === reviewerName) {
+      if (data.empId === reviewerEmpId) {
         return { ok: false, reason: 'selfReview', data };
       }
 
       tx.update(requestRef, {
         status: newStatus,
-        decidedBy: reviewerName,
-        decidedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
       return { ok: true, data };
     });
@@ -504,8 +570,7 @@ async function handleReviewPostback(client, event, action, requestId) {
         await replyText(client, event.replyToken, '⚠️ 找不到該假單');
       } else if (result.reason === 'alreadyDecided') {
         const statusText = result.data.status === 'approved' ? '已被核准' : '已被駁回';
-        await replyText(client, event.replyToken,
-          `⚠️ 此假單${statusText}\n審核人:${result.data.decidedBy}`);
+        await replyText(client, event.replyToken, `⚠️ 此假單${statusText}`);
       } else if (result.reason === 'notApprover') {
         await replyText(client, event.replyToken, '⚠️ 您不是此假單的審核人');
       } else if (result.reason === 'selfReview') {
@@ -514,19 +579,33 @@ async function handleReviewPostback(client, event, action, requestId) {
       return;
     }
 
-    // 成功 → 回覆審核者
-    const t = findLeaveType(result.data.type);
+    // 把 type 轉回中文顯示
+    const typeZh = Object.keys(LEAVE_TYPE_TO_KEY).find(k => LEAVE_TYPE_TO_KEY[k] === result.data.type) || result.data.type;
+    const t = findLeaveType(typeZh);
     const actionText = action === 'approve' ? '已核准 ✅' : '已駁回 ❌';
+
+    // 寫 auditLog
+    const reviewerEmp = await getEmployeeById(reviewerEmpId);
+    const reviewerRole = reviewerEmp?.data?.role || 'manager';
+    await writeAuditLog(action, 'leaves', result.data.empName, reviewerName, reviewerRole);
+
+    // 回覆審核者
     await replyText(
       client, event.replyToken,
-      `${actionText}\n\n申請人:${result.data.employeeName}\n假別:${t.emoji} ${result.data.type}\n日期:${formatDateWithWeekday(result.data.startDate)} ~ ${formatDateWithWeekday(result.data.endDate)}`
+      `${actionText}\n\n申請人:${result.data.empName}\n假別:${t.emoji} ${typeZh}\n日期:${formatDateWithWeekday(result.data.startDate)} ~ ${formatDateWithWeekday(result.data.endDate)}`
     );
 
-    // Push 通知員工結果(原 2c)
-    const employeeLineId = await getLineUserIdByName(result.data.employeeName);
+    // Push 通知員工結果 (不顯示審核人)
+    const employeeLineId = await getLineUserIdByEmpId(result.data.empId);
     if (employeeLineId) {
+      const resultData = {
+        typeZh,
+        startDate: result.data.startDate,
+        endDate: result.data.endDate,
+        days: result.data.days,
+      };
       await pushMessages(client, employeeLineId, [
-        buildResultFlex(result.data, action === 'approve', reviewerName),
+        buildResultFlex(resultData, action === 'approve'),
       ]);
     }
   } catch (err) {
@@ -552,7 +631,6 @@ async function handlePostback(client, event) {
     return;
   }
   const binding = bindingSnap.data();
-  const employeeName = binding.employeeName;
   const flow = binding.currentFlow;
 
   if (params.action === 'cancel') {
@@ -617,7 +695,7 @@ async function handlePostback(client, event) {
   }
 
   if (params.action === 'submit' && flow.step === 'confirm') {
-    return submitLeave(client, event.replyToken, bindingRef, employeeName, flow.data);
+    return submitLeave(client, event.replyToken, bindingRef, binding, flow.data);
   }
 }
 
@@ -639,22 +717,27 @@ async function handleTextMessage(client, event) {
   const bindingSnap = await bindingRef.get();
 
   if (!bindingSnap.exists) {
-    const employeeRef = db.collection('employees').doc(text);
-    const employeeSnap = await employeeRef.get();
-
-    if (!employeeSnap.exists) {
+    // 用姓名 query employees,找新版亂碼 doc.id
+    const emp = await findEmployeeByName(text);
+    if (!emp) {
       await replyText(client, event.replyToken, '查無此員工 ❌\n請確認姓名是否正確(範例:王O明)', false);
       return;
     }
-    if (employeeSnap.data().lineUserId) {
+    if (emp.data.lineUserId) {
       await replyText(client, event.replyToken, '此員工姓名已被綁定 ⚠️\n如有問題請聯絡 HR', false);
       return;
     }
 
+    // 雙向寫入:employees 加 lineUserId, lineBindings 加 empId
     const now = admin.firestore.FieldValue.serverTimestamp();
+    const empRef = db.collection('employees').doc(emp.id);
     const batch = db.batch();
-    batch.update(employeeRef, { lineUserId: userId, boundAt: now });
-    batch.set(bindingRef, { employeeName: text, boundAt: now });
+    batch.update(empRef, { lineUserId: userId, boundAt: now });
+    batch.set(bindingRef, {
+      employeeName: text,
+      empId: emp.id,
+      boundAt: now,
+    });
     await batch.commit();
 
     await replyMessages(client, event.replyToken, attachMenuQR([
