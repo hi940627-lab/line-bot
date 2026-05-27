@@ -897,17 +897,19 @@ exports.registerUser = onCall({ region: 'asia-east1' }, async (request) => {
     name: empData.name,
     dept: empData.department || '',
   };
-  });
-  // ════════════════════════════════════════════════════
+});
+
+// ════════════════════════════════════════════════════
 //  lineLogin — LIFF 登入 (HR 網頁呼叫)
 //
 //  輸入: { accessToken: "LIFF access token" }
 //
 //  流程:
-//   1. 用 accessToken 打 LINE Verify API → 拿 lineUserId
-//   2. 查 lineBindings/{lineUserId} 存在嗎? (LINE Bot 守門)
-//   3. 產 Firebase custom token (uid = lineUserId)
-//   4. 回 { customToken, empId, employeeName }
+//   1. 用 accessToken 打 LINE Verify API → 確認來源正確
+//   2. 用 accessToken 打 LINE Profile API → 拿 lineUserId
+//   3. 查 lineBindings/{lineUserId} 存在嗎? (LINE Bot 守門)
+//   4. 產 Firebase custom token (uid = lineUserId)
+//   5. 回 { customToken, empId, employeeName }
 // ════════════════════════════════════════════════════
 exports.lineLogin = onCall({ region: 'asia-east1' }, async (request) => {
   const accessToken = (request.data?.accessToken || '').trim();
@@ -915,12 +917,7 @@ exports.lineLogin = onCall({ region: 'asia-east1' }, async (request) => {
     throw new HttpsError('invalid-argument', '缺少 accessToken');
   }
 
-  // 1. 驗證 access token → 拿 lineUserId
-  const channelSecret = process.env.LINE_LOGIN_CHANNEL_SECRET;
-  if (!channelSecret) {
-    throw new HttpsError('internal', 'LINE_LOGIN_CHANNEL_SECRET 未設定');
-  }
-
+  // 1. 驗證 access token (確認是從正確的 LIFF app 來的)
   let lineUserId;
   try {
     const verifyRes = await fetch(
@@ -928,7 +925,9 @@ exports.lineLogin = onCall({ region: 'asia-east1' }, async (request) => {
     );
     const verifyData = await verifyRes.json();
 
-    // client_id 要跟你的 LINE Login Channel ID 一致
+    if (!verifyData.client_id) {
+      throw new HttpsError('unauthenticated', 'access token 驗證失敗');
+    }
     if (verifyData.client_id !== '2010216136') {
       throw new HttpsError('unauthenticated', 'access token 來源不符');
     }
@@ -936,7 +935,7 @@ exports.lineLogin = onCall({ region: 'asia-east1' }, async (request) => {
       throw new HttpsError('unauthenticated', 'access token 已過期');
     }
 
-    // 用 token 拿 profile
+    // 2. 拿 lineUserId
     const profileRes = await fetch('https://api.line.me/v2/profile', {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
@@ -951,7 +950,7 @@ exports.lineLogin = onCall({ region: 'asia-east1' }, async (request) => {
     throw new HttpsError('unauthenticated', '無法取得 LINE userId');
   }
 
-  // 2. 查 lineBindings — LINE Bot 守門
+  // 3. 查 lineBindings — LINE Bot 是守門員
   const bindingSnap = await db.collection('lineBindings').doc(lineUserId).get();
   if (!bindingSnap.exists) {
     throw new HttpsError('not-found', '請先加入 LINE Bot 並完成綁定');
@@ -959,13 +958,13 @@ exports.lineLogin = onCall({ region: 'asia-east1' }, async (request) => {
   const bindingData = bindingSnap.data();
   const empId = bindingData.empId || null;
 
-  // 3. 產 Firebase custom token
+  // 4. 產 Firebase custom token (uid = lineUserId)
   const customToken = await admin.auth().createCustomToken(lineUserId);
 
-  // 4. 回傳
+  // 5. 回傳
   return {
     customToken,
     empId,
-    employeeName: bindingData.employeeName || bindingData.name || '',
+    employeeName: bindingData.employeeName || '',
   };
 });
