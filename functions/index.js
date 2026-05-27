@@ -1,4 +1,4 @@
-const { onRequest } = require('firebase-functions/v2/https');
+const { onRequest, onCall, HttpsError } = require('firebase-functions/v2/https');
 const admin = require('firebase-admin');
 const { messagingApi } = require('@line/bot-sdk');
 const express = require('express');
@@ -814,3 +814,87 @@ app.post('/webhook', express.json(), async (req, res) => {
 });
 
 exports.lineWebhook = onRequest({ region: 'asia-east1' }, app);
+
+// ════════════════════════════════════════════════════
+//  registerUser — 員工自助綁定 (HR 網頁呼叫)
+//
+//  輸入: { employeeName: "梁O邦" }
+//  email: 從 context.auth.token.email 拿,不接受前端傳
+//
+//  驗證:
+//   1. 必須已 Google 登入
+//   2. users/{email} 不能已存在
+//   3. employees 找得到此姓名
+//   4. lineBindings 找得到此姓名 (LINE 守門)
+//   5. 該 lineBinding 沒被別的 email 綁走
+//
+//  通過後:
+//   - 建 users/{email} = { empId, name, dept, createdAt }
+//   - lineBindings.email 回寫
+// ════════════════════════════════════════════════════
+exports.registerUser = onCall({ region: 'asia-east1' }, async (request) => {
+  // 1. 必須登入
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', '請先登入');
+  }
+  const email = request.auth.token.email;
+  if (!email) {
+    throw new HttpsError('unauthenticated', '無法取得您的 email');
+  }
+
+  // 2. 拿輸入的姓名
+  const employeeName = (request.data?.employeeName || '').trim();
+  if (!employeeName) {
+    throw new HttpsError('invalid-argument', '請輸入姓名');
+  }
+
+  // 3. users/{email} 不能已存在
+  const userRef = db.collection('users').doc(email);
+  const userSnap = await userRef.get();
+  if (userSnap.exists) {
+    throw new HttpsError('already-exists', '此帳號已經綁定過了');
+  }
+
+  // 4. 找 employees
+  const empSnap = await db.collection('employees').where('name', '==', employeeName).limit(1).get();
+  if (empSnap.empty) {
+    throw new HttpsError('not-found', '查無此員工,請確認姓名是否正確');
+  }
+  const empDoc = empSnap.docs[0];
+  const empData = empDoc.data();
+
+  // 5. 找 lineBindings (LINE 守門)
+  const bindSnap = await db.collection('lineBindings')
+    .where('employeeName', '==', employeeName)
+    .limit(1)
+    .get();
+  if (bindSnap.empty) {
+    throw new HttpsError('failed-precondition', '請先在 LINE Bot 完成綁定後再回來');
+  }
+  const bindDoc = bindSnap.docs[0];
+  const bindData = bindDoc.data();
+
+  // 6. 該 lineBinding 沒被別的 email 領走
+  if (bindData.email && bindData.email !== email) {
+    throw new HttpsError('permission-denied', '此姓名已被其他帳號綁定,如有問題請聯絡 HR');
+  }
+
+  // 7. 通過 → batch 寫入
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const batch = db.batch();
+  batch.set(userRef, {
+    empId: empDoc.id,
+    name: empData.name,
+    dept: empData.department || '',
+    createdAt: now,
+  });
+  batch.update(bindDoc.ref, { email });
+  await batch.commit();
+
+  return {
+    ok: true,
+    empId: empDoc.id,
+    name: empData.name,
+    dept: empData.department || '',
+  };
+});
