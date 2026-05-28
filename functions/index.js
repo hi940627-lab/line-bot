@@ -172,6 +172,32 @@ function buildMainMenuFlex(employeeName) {
   };
 }
 
+// ===== 卡片:進入 HR 系統 (LIFF) =====
+function buildLiffEntryFlex() {
+  return {
+    type: 'flex',
+    altText: '請登入 HR 系統',
+    contents: {
+      type: 'bubble',
+      header: {
+        type: 'box', layout: 'vertical',
+        backgroundColor: COLOR.headerMenu, paddingAll: '16px',
+        contents: [
+          { type: 'text', text: '🏢 HR 系統', weight: 'bold', size: 'lg', color: '#FFFFFF' },
+          { type: 'text', text: '請登入 HR 系統', size: 'sm', color: '#FFFFFFCC', margin: 'sm' },
+        ],
+      },
+      body: {
+        type: 'box', layout: 'vertical', paddingAll: '16px',
+        contents: [
+          { type: 'button', style: 'primary', color: COLOR.submit,
+            action: { type: 'uri', label: '🔑 進入系統', uri: 'https://liff.line.me/2010216136-ErHg7td7' } },
+        ],
+      },
+    },
+  };
+}
+
 // ===== 卡片:選假別 =====
 function buildLeaveTypeFlex() {
   return {
@@ -742,7 +768,7 @@ async function handleTextMessage(client, event) {
 
     await replyMessages(client, event.replyToken, attachMenuQR([
       { type: 'text', text: `綁定成功!您好,${text} 👋` },
-      buildMainMenuFlex(text),
+      buildLiffEntryFlex(),
     ]));
     return;
   }
