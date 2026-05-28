@@ -957,6 +957,28 @@ exports.lineLogin = onCall({ region: 'asia-east1' }, async (request) => {
   const bindingData = bindingSnap.data();
   const empId = bindingData.empId || null;
 
+  // 3b. 同步 employees 的 role 到 lineBindings（讓 Rules 只需讀一層）
+  //     employees 仍是事實源，lineBindings.role 只是登入時更新的快取
+  if (empId) {
+    try {
+      const empSnap = await db.collection('employees').doc(empId).get();
+      if (empSnap.exists) {
+        const role = empSnap.data().role || 'employee';
+        const dept = empSnap.data().department || '';
+        if (bindingData.role !== role || bindingData.department !== dept) {
+          await db.collection('lineBindings').doc(lineUserId).set(
+            { role, department: dept },
+            { merge: true }
+          );
+          console.log('synced role to lineBindings:', role);
+        }
+      }
+    } catch (err) {
+      console.error('sync role error (non-fatal):', err);
+      // 同步失敗不擋登入
+    }
+  }
+
   // 4. 產 Firebase custom token
   let customToken;
   try {
