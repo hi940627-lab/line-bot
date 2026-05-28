@@ -912,6 +912,7 @@ exports.registerUser = onCall({ region: 'asia-east1' }, async (request) => {
     empId: empDoc.id,
     name: empData.name,
     dept: empData.department || '',
+    role: empData.role || 'employee',
     createdAt: now,
   });
   batch.update(bindDoc.ref, { email });
