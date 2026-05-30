@@ -162,10 +162,10 @@ function buildMainMenuFlex(employeeName) {
         contents: [
           { type: 'button', style: 'primary', color: COLOR.submit,
             action: { type: 'message', label: '📝 請假申請', text: '請假' } },
-          { type: 'button', style: 'primary', color: COLOR.disabled,
-            action: { type: 'message', label: '🏥 體檢(敬請期待)', text: '體檢' } },
-          { type: 'button', style: 'primary', color: COLOR.disabled,
-            action: { type: 'message', label: '💪 體能(敬請期待)', text: '體能' } },
+          { type: 'button', style: 'primary', color: COLOR.headerReview,
+            action: { type: 'message', label: '🏥 體檢', text: '體檢' } },
+          { type: 'button', style: 'primary', color: COLOR.headerSelect,
+            action: { type: 'message', label: '💪 體能', text: '體能' } },
         ],
       },
     },
@@ -195,6 +195,185 @@ function buildLiffEntryFlex() {
         ],
       },
     },
+  };
+}
+
+// ===== 工具:算還剩幾天(以台北日期計) =====
+function daysFromTodayTaipei(dateStr) {
+  if (!dateStr) return null;
+  // 台北今天的 YYYY-MM-DD
+  const todayTw = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
+  const ms = new Date(dateStr).getTime() - new Date(todayTw).getTime();
+  return Math.round(ms / 86400000);
+}
+
+// ===== 工具:取體能項目陣列(防 undefined) =====
+function getFitItems(empData) {
+  return [empData.fitItem1, empData.fitItem2, empData.fitItem3].filter(Boolean);
+}
+
+// ===== 工具:剩X天文字 =====
+function daysLeftText(dateStr) {
+  const d = daysFromTodayTaipei(dateStr);
+  if (d === null) return '';
+  if (d < 0) return ` (已過期 ${-d} 天)`;
+  if (d === 0) return ' (今天)';
+  return ` (剩 ${d} 天)`;
+}
+
+// ===== 卡片:單人體能(內部用 bubble,carousel 也共用) =====
+function buildFitnessBubble(empData) {
+  const name = empData.name || '—';
+  const fitItems = getFitItems(empData);
+  const status = empData.fitResult === 'pass' ? '✅ 通過'
+    : empData.fitResult === 'fail' ? '❌ 未通過'
+    : '⏳ 尚未測驗';
+
+  const rows = [
+    { type: 'text', text: `狀態:${status}`, size: 'sm', wrap: true, margin: 'sm' },
+  ];
+  if (fitItems.length) {
+    rows.push({ type: 'text', text: `項目:${fitItems.join('、')}`, size: 'sm', wrap: true, margin: 'sm', color: '#666666' });
+  }
+  if (empData.fitDate) {
+    rows.push({ type: 'text', text: `測驗日:${empData.fitDate}`, size: 'sm', wrap: true, margin: 'sm', color: '#666666' });
+  }
+  if (empData.fitNext) {
+    rows.push({ type: 'text', text: `下次:${empData.fitNext}${daysLeftText(empData.fitNext)}`, size: 'sm', wrap: true, margin: 'sm', color: '#666666' });
+  }
+
+  return {
+    type: 'bubble',
+    header: {
+      type: 'box', layout: 'vertical', backgroundColor: COLOR.headerSelect, paddingAll: '14px',
+      contents: [
+        { type: 'text', text: '💪 體能測驗', weight: 'bold', size: 'md', color: '#FFFFFF' },
+        { type: 'text', text: name, size: 'sm', color: '#FFFFFFCC', margin: 'xs' },
+      ],
+    },
+    body: {
+      type: 'box', layout: 'vertical', paddingAll: '14px', contents: rows,
+    },
+  };
+}
+
+// ===== 卡片:單人體檢 =====
+function buildMedicalBubble(empData) {
+  const name = empData.name || '—';
+  const hasAny = empData.medLevel || empData.medDate || empData.medNext;
+
+  const rows = [];
+  if (!hasAny) {
+    rows.push({ type: 'text', text: '⏳ 尚未體檢,請聯絡 HR', size: 'sm', wrap: true, margin: 'sm' });
+  } else {
+    if (empData.medLevel) {
+      rows.push({ type: 'text', text: `等級:第 ${empData.medLevel} 級`, size: 'sm', wrap: true, margin: 'sm' });
+    }
+    if (empData.medDate) {
+      rows.push({ type: 'text', text: `體檢日:${empData.medDate}`, size: 'sm', wrap: true, margin: 'sm', color: '#666666' });
+    }
+    if (empData.medNext) {
+      rows.push({ type: 'text', text: `下次:${empData.medNext}${daysLeftText(empData.medNext)}`, size: 'sm', wrap: true, margin: 'sm', color: '#666666' });
+    }
+  }
+
+  return {
+    type: 'bubble',
+    header: {
+      type: 'box', layout: 'vertical', backgroundColor: COLOR.headerReview, paddingAll: '14px',
+      contents: [
+        { type: 'text', text: '🏥 體檢', weight: 'bold', size: 'md', color: '#FFFFFF' },
+        { type: 'text', text: name, size: 'sm', color: '#FFFFFFCC', margin: 'xs' },
+      ],
+    },
+    body: {
+      type: 'box', layout: 'vertical', paddingAll: '14px', contents: rows,
+    },
+  };
+}
+
+// ===== 卡片:看下屬清單按鈕(manager) =====
+function buildSubordinatesEntryFlex(kind) {
+  // kind: 'fit' | 'med'
+  const label = kind === 'fit' ? '💪 看下屬體能名單' : '🏥 看下屬體檢名單';
+  const text = kind === 'fit' ? '下屬體能' : '下屬體檢';
+  return {
+    type: 'bubble',
+    body: {
+      type: 'box', layout: 'vertical', paddingAll: '14px',
+      contents: [
+        { type: 'button', style: 'primary', color: COLOR.headerMenu,
+          action: { type: 'message', label, text } },
+      ],
+    },
+  };
+}
+
+// ===== 卡片:admin 進 HR 看完整名單 =====
+function buildAdminLiffEntryFlex() {
+  return {
+    type: 'bubble',
+    body: {
+      type: 'box', layout: 'vertical', paddingAll: '14px',
+      contents: [
+        { type: 'button', style: 'primary', color: COLOR.headerMenu,
+          action: { type: 'uri', label: '📋 進 HR 看完整名單', uri: 'https://liff.line.me/2010216136-ErHg7td7' } },
+      ],
+    },
+  };
+}
+
+// ===== 主入口:組體能/體檢回應 messages =====
+async function buildFitMedReply(kind, myEmpId, myData) {
+  // kind: 'fit' | 'med'
+  const role = myData.role || 'employee';
+  const myBubble = kind === 'fit' ? buildFitnessBubble(myData) : buildMedicalBubble(myData);
+
+  // employee: 只回自己
+  if (role === 'employee') {
+    return [{
+      type: 'flex',
+      altText: kind === 'fit' ? '體能測驗' : '體檢',
+      contents: myBubble,
+    }];
+  }
+
+  // manager: 自己 + 「看下屬」按鈕
+  if (role === 'manager') {
+    return [{
+      type: 'flex',
+      altText: kind === 'fit' ? '體能測驗' : '體檢',
+      contents: { type: 'carousel', contents: [myBubble, buildSubordinatesEntryFlex(kind)] },
+    }];
+  }
+
+  // admin: 自己 + 「進 HR」按鈕
+  return [{
+    type: 'flex',
+    altText: kind === 'fit' ? '體能測驗' : '體檢',
+    contents: { type: 'carousel', contents: [myBubble, buildAdminLiffEntryFlex()] },
+  }];
+}
+
+// ===== 下屬名單 carousel(manager 點「看下屬」後觸發) =====
+async function buildSubordinatesCarousel(kind, myName) {
+  // kind: 'fit' | 'med'
+  const snap = await db.collection('employees').where('supervisor', '==', myName).get();
+  const subs = snap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(e => e.status === 'active');
+
+  if (subs.length === 0) return null;
+
+  // carousel 上限 12,22 人公司主管下屬通常 < 12
+  const bubbles = subs.slice(0, 12).map(e =>
+    kind === 'fit' ? buildFitnessBubble(e) : buildMedicalBubble(e)
+  );
+
+  return {
+    type: 'flex',
+    altText: kind === 'fit' ? '下屬體能名單' : '下屬體檢名單',
+    contents: { type: 'carousel', contents: bubbles },
   };
 }
 
@@ -788,12 +967,41 @@ async function handleTextMessage(client, event) {
     return;
   }
 
-  if (text === '體檢') {
-    await replyText(client, event.replyToken, '🏥 體檢功能開發中,敬請期待!');
+  if (text === '體檢' || text === '體能') {
+    const kind = text === '體能' ? 'fit' : 'med';
+    const myEmpId = binding.empId;
+    const me = await getEmployeeById(myEmpId);
+    if (!me) {
+      await replyText(client, event.replyToken, '找不到您的員工資料,請聯絡 HR');
+      return;
+    }
+    if (me.data.status !== 'active') {
+      await replyText(client, event.replyToken, '您目前不是在職狀態,無法查詢');
+      return;
+    }
+    const messages = await buildFitMedReply(kind, myEmpId, me.data);
+    await replyMessages(client, event.replyToken, attachMenuQR(messages));
     return;
   }
-  if (text === '體能') {
-    await replyText(client, event.replyToken, '💪 體能功能開發中,敬請期待!');
+
+  if (text === '下屬體檢' || text === '下屬體能') {
+    const kind = text === '下屬體能' ? 'fit' : 'med';
+    const myEmpId = binding.empId;
+    const me = await getEmployeeById(myEmpId);
+    if (!me) {
+      await replyText(client, event.replyToken, '找不到您的員工資料,請聯絡 HR');
+      return;
+    }
+    if (me.data.role !== 'manager') {
+      await replyText(client, event.replyToken, '此功能僅限主管使用');
+      return;
+    }
+    const carousel = await buildSubordinatesCarousel(kind, me.data.name);
+    if (!carousel) {
+      await replyText(client, event.replyToken, '您目前沒有下屬員工');
+      return;
+    }
+    await replyMessages(client, event.replyToken, attachMenuQR([carousel]));
     return;
   }
 
@@ -1022,4 +1230,71 @@ exports.lineLogin = onCall({ region: 'asia-east1' }, async (request) => {
     empId,
     employeeName: bindingData.employeeName || '',
   };
+});
+
+// ════════════════════════════════════════════════════
+//  dailyFitMedReminder — 前一日推播提醒(體能/體檢)
+//
+//  觸發: GCP Console 手動建 Cloud Scheduler
+//  時區: Asia/Taipei
+//  排程: 每日 20:00 (0 20 * * *)
+//  HTTP 觸發: POST 此 function URL
+//
+//  邏輯: 掃 employees,fitNext/medNext === 明天 的人,推 LINE
+//  推播失敗: try-catch 包住,只寫 log,不擋整批
+// ════════════════════════════════════════════════════
+exports.dailyFitMedReminder = onRequest({ region: 'asia-east1' }, async (req, res) => {
+  // 算台北明天的 YYYY-MM-DD
+  const nowMs = Date.now() + 8 * 3600 * 1000; // UTC + 8
+  const tomorrowMs = nowMs + 86400 * 1000;
+  const tomorrowStr = new Date(tomorrowMs).toISOString().slice(0, 10);
+  const tomorrowWeekday = WEEKDAYS[new Date(tomorrowMs).getUTCDay()];
+
+  console.log(`[dailyFitMedReminder] 開始掃描,明天=${tomorrowStr} ${tomorrowWeekday}`);
+
+  const client = getLineClient();
+  const empsSnap = await db.collection('employees').get();
+
+  let pushed = 0;
+  let skipped = 0;
+  let failed = 0;
+  const results = [];
+
+  for (const doc of empsSnap.docs) {
+    const emp = doc.data();
+    if (emp.status !== 'active') { skipped++; continue; }
+    if (!emp.lineUserId) { skipped++; continue; }
+
+    const hasFit = emp.fitNext === tomorrowStr;
+    const hasMed = emp.medNext === tomorrowStr;
+    if (!hasFit && !hasMed) { skipped++; continue; }
+
+    // 組訊息
+    let msgText;
+    if (hasFit && hasMed) {
+      const fitItems = getFitItems(emp);
+      const itemsLine = fitItems.length ? `\n體能項目:${fitItems.join('、')}` : '';
+      msgText = `🏥💪 提醒:您明天(${tomorrowStr} ${tomorrowWeekday})有體能測驗 + 體檢${itemsLine}\n如有調整,請聯絡主管或管理員`;
+    } else if (hasFit) {
+      const fitItems = getFitItems(emp);
+      const itemsLine = fitItems.length ? `\n測驗項目:${fitItems.join('、')}` : '';
+      msgText = `💪 提醒:您明天(${tomorrowStr} ${tomorrowWeekday})有體能測驗${itemsLine}\n如有調整,請聯絡主管或管理員`;
+    } else {
+      msgText = `🏥 提醒:您明天(${tomorrowStr} ${tomorrowWeekday})有體檢\n如有調整,請聯絡主管或管理員`;
+    }
+
+    // 推播
+    const ok = await pushMessages(client, emp.lineUserId, [{ type: 'text', text: msgText }]);
+    if (ok) {
+      pushed++;
+      results.push({ empId: doc.id, name: emp.name, type: hasFit && hasMed ? 'both' : hasFit ? 'fit' : 'med', success: true });
+    } else {
+      failed++;
+      results.push({ empId: doc.id, name: emp.name, type: hasFit && hasMed ? 'both' : hasFit ? 'fit' : 'med', success: false });
+    }
+  }
+
+  const summary = { tomorrow: tomorrowStr, pushed, skipped, failed, results };
+  console.log('[dailyFitMedReminder] 完成:', JSON.stringify(summary));
+  res.json(summary);
 });
