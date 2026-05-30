@@ -338,20 +338,30 @@ async function buildFitMedReply(kind, myEmpId, myData) {
     }];
   }
 
-  // manager: 自己 + 「看下屬」按鈕
-  if (role === 'manager') {
-    return [{
-      type: 'flex',
-      altText: kind === 'fit' ? '體能測驗' : '體檢',
-      contents: { type: 'carousel', contents: [myBubble, buildSubordinatesEntryFlex(kind)] },
-    }];
+  // manager / admin: 自己 + (有下屬時) 看下屬按鈕 + (admin) 進 HR 按鈕
+  // 先查有沒有下屬,決定要不要放「看下屬」按鈕
+  const subSnap = await db.collection('employees')
+    .where('supervisor', '==', myData.name || '')
+    .get();
+  const hasSubordinates = subSnap.docs.some(d => d.data().status === 'active');
+
+  const bubbles = [myBubble];
+  if (hasSubordinates) {
+    bubbles.push(buildSubordinatesEntryFlex(kind));
+  }
+  if (role === 'admin') {
+    bubbles.push(buildAdminLiffEntryFlex());
   }
 
-  // admin: 自己 + 「進 HR」按鈕
+  // 單一 bubble 不用 carousel(LINE 對單 bubble 包 carousel 會報錯)
+  const contents = bubbles.length === 1
+    ? bubbles[0]
+    : { type: 'carousel', contents: bubbles };
+
   return [{
     type: 'flex',
     altText: kind === 'fit' ? '體能測驗' : '體檢',
-    contents: { type: 'carousel', contents: [myBubble, buildAdminLiffEntryFlex()] },
+    contents,
   }];
 }
 
@@ -992,8 +1002,8 @@ async function handleTextMessage(client, event) {
       await replyText(client, event.replyToken, '找不到您的員工資料,請聯絡 HR');
       return;
     }
-    if (me.data.role !== 'manager') {
-      await replyText(client, event.replyToken, '此功能僅限主管使用');
+    if (me.data.role !== 'manager' && me.data.role !== 'admin') {
+      await replyText(client, event.replyToken, '此功能僅限主管或管理員使用');
       return;
     }
     const carousel = await buildSubordinatesCarousel(kind, me.data.name);
