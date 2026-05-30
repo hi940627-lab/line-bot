@@ -293,9 +293,11 @@ function buildMedicalBubble(empData) {
 }
 
 // ===== 卡片:看下屬清單按鈕(manager) =====
-function buildSubordinatesEntryFlex(kind) {
-  // kind: 'fit' | 'med'
-  const label = kind === 'fit' ? '💪 看下屬體能名單' : '🏥 看下屬體檢名單';
+function buildSubordinatesEntryFlex(kind, role) {
+  // kind: 'fit' | 'med', role: 'manager' | 'admin'
+  const scope = role === 'admin' ? '全公司' : '下屬';
+  const label = kind === 'fit' ? `💪 看${scope}體能名單` : `🏥 看${scope}體檢名單`;
+  // text 統一,handleText 用同一個分支處理(差別在 role 而非觸發字串)
   const text = kind === 'fit' ? '下屬體能' : '下屬體檢';
   return {
     type: 'bubble',
@@ -346,8 +348,9 @@ async function buildFitMedReply(kind, myEmpId, myData) {
   const hasSubordinates = subSnap.docs.some(d => d.data().status === 'active');
 
   const bubbles = [myBubble];
-  if (hasSubordinates) {
-    bubbles.push(buildSubordinatesEntryFlex(kind));
+  if (hasSubordinates || role === 'admin') {
+    // admin 即使沒下屬也要顯示「看全公司」按鈕
+    bubbles.push(buildSubordinatesEntryFlex(kind, role));
   }
   if (role === 'admin') {
     bubbles.push(buildAdminLiffEntryFlex());
@@ -365,26 +368,53 @@ async function buildFitMedReply(kind, myEmpId, myData) {
   }];
 }
 
-// ===== 下屬名單 carousel(manager 點「看下屬」後觸發) =====
-async function buildSubordinatesCarousel(kind, myName) {
-  // kind: 'fit' | 'med'
-  const snap = await db.collection('employees').where('supervisor', '==', myName).get();
-  const subs = snap.docs
+// ===== 下屬/全公司名單 純文字(manager/admin 點按鈕後觸發) =====
+async function buildSubordinatesText(kind, myData) {
+  // kind: 'fit' | 'med', myData: { name, role, ... }
+  const role = myData.role || 'employee';
+  let snap;
+  let scopeLabel;
+  if (role === 'admin') {
+    // admin 看全公司在職員工
+    snap = await db.collection('employees').where('status', '==', 'active').get();
+    scopeLabel = '全公司';
+  } else {
+    // manager 看 supervisor === 自己的人
+    snap = await db.collection('employees').where('supervisor', '==', myData.name || '').get();
+    scopeLabel = '下屬';
+  }
+
+  const list = snap.docs
     .map(d => ({ id: d.id, ...d.data() }))
-    .filter(e => e.status === 'active');
+    .filter(e => e.status === 'active')
+    // 部門優先,部門內按姓名
+    .sort((a, b) => (a.department || '').localeCompare(b.department || '') || (a.name || '').localeCompare(b.name || ''));
 
-  if (subs.length === 0) return null;
+  if (list.length === 0) return null;
 
-  // carousel 上限 12,22 人公司主管下屬通常 < 12
-  const bubbles = subs.slice(0, 12).map(e =>
-    kind === 'fit' ? buildFitnessBubble(e) : buildMedicalBubble(e)
-  );
+  const title = kind === 'fit' ? `💪 ${scopeLabel}體能名單` : `🏥 ${scopeLabel}體檢名單`;
+  const lines = [title, `共 ${list.length} 人`, '─────────'];
 
-  return {
-    type: 'flex',
-    altText: kind === 'fit' ? '下屬體能名單' : '下屬體檢名單',
-    contents: { type: 'carousel', contents: bubbles },
-  };
+  for (const e of list) {
+    const deptTag = e.department ? `[${e.department}] ` : '';
+    lines.push(`${deptTag}${e.name || '—'}`);
+    if (kind === 'fit') {
+      const status = e.fitResult === 'pass' ? '✅ 通過' : e.fitResult === 'fail' ? '❌ 未通過' : '⏳ 尚未測驗';
+      lines.push(`  ${status}`);
+      const items = getFitItems(e);
+      if (items.length) lines.push(`  項目:${items.join('、')}`);
+      if (e.fitDate) lines.push(`  測驗日:${e.fitDate}`);
+      if (e.fitNext) lines.push(`  下次:${e.fitNext}${daysLeftText(e.fitNext)}`);
+    } else {
+      if (e.medLevel) lines.push(`  等級:第 ${e.medLevel} 級`);
+      else lines.push(`  ⏳ 尚未體檢`);
+      if (e.medDate) lines.push(`  體檢日:${e.medDate}`);
+      if (e.medNext) lines.push(`  下次:${e.medNext}${daysLeftText(e.medNext)}`);
+    }
+    lines.push(''); // 段落空行
+  }
+
+  return { type: 'text', text: lines.join('\n').trimEnd() };
 }
 
 // ===== 卡片:選假別 =====
@@ -1006,12 +1036,13 @@ async function handleTextMessage(client, event) {
       await replyText(client, event.replyToken, '此功能僅限主管或管理員使用');
       return;
     }
-    const carousel = await buildSubordinatesCarousel(kind, me.data.name);
-    if (!carousel) {
-      await replyText(client, event.replyToken, '您目前沒有下屬員工');
+    const textMsg = await buildSubordinatesText(kind, me.data);
+    if (!textMsg) {
+      const emptyMsg = me.data.role === 'admin' ? '目前公司沒有在職員工' : '您目前沒有下屬員工';
+      await replyText(client, event.replyToken, emptyMsg);
       return;
     }
-    await replyMessages(client, event.replyToken, attachMenuQR([carousel]));
+    await replyMessages(client, event.replyToken, attachMenuQR([textMsg]));
     return;
   }
 
