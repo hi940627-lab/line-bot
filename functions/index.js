@@ -64,6 +64,8 @@ const MAIN_QUICK_REPLY = {
     { type: 'action', action: { type: 'message', label: '📝 請假', text: '請假' } },
     { type: 'action', action: { type: 'message', label: '🏥 體檢', text: '體檢' } },
     { type: 'action', action: { type: 'message', label: '💪 體能', text: '體能' } },
+    { type: 'action', action: { type: 'message', label: '🚗 駕照', text: '駕照' } },
+    { type: 'action', action: { type: 'message', label: '📜 證照', text: '證照' } },
     { type: 'action', action: { type: 'message', label: '📋 主選單', text: '選單' } },
   ],
 };
@@ -166,6 +168,10 @@ function buildMainMenuFlex(employeeName) {
             action: { type: 'message', label: '🏥 體檢', text: '體檢' } },
           { type: 'button', style: 'primary', color: COLOR.headerSelect,
             action: { type: 'message', label: '💪 體能', text: '體能' } },
+          { type: 'button', style: 'primary', color: COLOR.headerConfirm,
+            action: { type: 'message', label: '🚗 駕照', text: '駕照' } },
+          { type: 'button', style: 'primary', color: COLOR.headerMenu,
+            action: { type: 'message', label: '📜 證照', text: '證照' } },
         ],
       },
     },
@@ -210,6 +216,56 @@ function daysFromTodayTaipei(dateStr) {
 // ===== 工具:取體能項目陣列(防 undefined) =====
 function getFitItems(empData) {
   return [empData.fitItem1, empData.fitItem2, empData.fitItem3].filter(Boolean);
+}
+
+// ===== 駕照 icon 對照 =====
+const LICENSE_ICONS = {
+  '普通小型車': '🚗',
+  '普通重型機車': '🏍️',
+  '輕型機車': '🛵',
+  '大型重型機車': '🏍️',
+  '大貨車': '🚛',
+  '大客車': '🚌',
+  '聯結車': '🚚',
+};
+
+// ===== 證照 對照(key → 中文 + icon) =====
+const CERT_MAP = {
+  emt: { name: 'EMT', icon: '🚑' },
+  ccna: { name: 'CCNA/CCNP', icon: '💻' },
+  hazmat: { name: 'HazMat', icon: '🧨' },
+  swimming: { name: 'Swimming', icon: '🏊' },
+  combat: { name: 'Combat Instructor', icon: '🥊' },
+  ptcourse: { name: 'PT Course', icon: '🏋️' },
+};
+
+// ===== 工具:組駕照顯示字串(含 ⭐🔑 標記) =====
+function getLicensesDisplay(empData) {
+  const list = empData.licenses || [];
+  if (list.length === 0) return [];
+  return list.map(l => {
+    const ico = LICENSE_ICONS[l] || '';
+    let marks = '';
+    if (l === '普通小型車') {
+      if (empData.lmCarStar) marks += '⭐';
+      if (empData.lmCarKey) marks += '🔑';
+    }
+    if (l === '大貨車') {
+      if (empData.lmTruckStar) marks += '⭐';
+      if (empData.lmTruckKey) marks += '🔑';
+    }
+    return `${ico} ${l}${marks}`;
+  });
+}
+
+// ===== 工具:組證照顯示字串 =====
+function getCertsDisplay(empData) {
+  const list = empData.certs || [];
+  if (list.length === 0) return [];
+  return list.map(k => {
+    const c = CERT_MAP[k];
+    return c ? `${c.icon} ${c.name}` : k;
+  });
 }
 
 // ===== 工具:剩X天文字 =====
@@ -308,6 +364,79 @@ function buildMedicalBubble(empData, extraButtons = []) {
   };
 }
 
+// ===== 卡片:單人駕照 =====
+function buildLicenseBubble(empData, extraButtons = []) {
+  const name = empData.name || '—';
+  const items = getLicensesDisplay(empData);
+
+  const rows = [];
+  if (items.length === 0) {
+    rows.push({ type: 'text', text: '⏳ 尚未登錄駕照', size: 'sm', wrap: true, margin: 'sm' });
+  } else {
+    items.forEach(line => {
+      rows.push({ type: 'text', text: line, size: 'sm', wrap: true, margin: 'sm' });
+    });
+    // 標記說明(只有 ⭐🔑 時才顯示說明)
+    const hasMarks = (empData.lmCarStar || empData.lmCarKey || empData.lmTruckStar || empData.lmTruckKey);
+    if (hasMarks) {
+      rows.push({ type: 'text', text: '⭐ 主駕  🔑 持有鑰匙', size: 'xs', wrap: true, margin: 'md', color: '#999999' });
+    }
+  }
+
+  if (extraButtons.length > 0) {
+    rows.push({ type: 'separator', margin: 'lg' });
+    extraButtons.forEach(btn => rows.push({ ...btn, margin: 'md' }));
+  }
+
+  return {
+    type: 'bubble',
+    header: {
+      type: 'box', layout: 'vertical', backgroundColor: COLOR.headerConfirm, paddingAll: '14px',
+      contents: [
+        { type: 'text', text: '🚗 駕照', weight: 'bold', size: 'md', color: '#FFFFFF' },
+        { type: 'text', text: name, size: 'sm', color: '#FFFFFFCC', margin: 'xs' },
+      ],
+    },
+    body: {
+      type: 'box', layout: 'vertical', paddingAll: '14px', contents: rows,
+    },
+  };
+}
+
+// ===== 卡片:單人證照 =====
+function buildCertBubble(empData, extraButtons = []) {
+  const name = empData.name || '—';
+  const items = getCertsDisplay(empData);
+
+  const rows = [];
+  if (items.length === 0) {
+    rows.push({ type: 'text', text: '⏳ 尚未登錄證照', size: 'sm', wrap: true, margin: 'sm' });
+  } else {
+    items.forEach(line => {
+      rows.push({ type: 'text', text: line, size: 'sm', wrap: true, margin: 'sm' });
+    });
+  }
+
+  if (extraButtons.length > 0) {
+    rows.push({ type: 'separator', margin: 'lg' });
+    extraButtons.forEach(btn => rows.push({ ...btn, margin: 'md' }));
+  }
+
+  return {
+    type: 'bubble',
+    header: {
+      type: 'box', layout: 'vertical', backgroundColor: COLOR.headerMenu, paddingAll: '14px',
+      contents: [
+        { type: 'text', text: '📜 證照', weight: 'bold', size: 'md', color: '#FFFFFF' },
+        { type: 'text', text: name, size: 'sm', color: '#FFFFFFCC', margin: 'xs' },
+      ],
+    },
+    body: {
+      type: 'box', layout: 'vertical', paddingAll: '14px', contents: rows,
+    },
+  };
+}
+
 // ===== 卡片:看下屬清單按鈕(manager) =====
 function buildSubordinatesEntryFlex(kind, role) {
   // kind: 'fit' | 'med', role: 'manager' | 'admin'
@@ -341,10 +470,19 @@ function buildAdminLiffEntryFlex() {
   };
 }
 
-// ===== 主入口:組體能/體檢回應 messages =====
+// ===== 4 種 kind 的對照表 =====
+const KIND_META = {
+  fit: { altText: '體能測驗', buttonLabel: '體能', trigger: '下屬體能', emoji: '💪' },
+  med: { altText: '體檢',     buttonLabel: '體檢', trigger: '下屬體檢', emoji: '🏥' },
+  lic: { altText: '駕照',     buttonLabel: '駕照', trigger: '下屬駕照', emoji: '🚗' },
+  cer: { altText: '證照',     buttonLabel: '證照', trigger: '下屬證照', emoji: '📜' },
+};
+
+// ===== 主入口:組體能/體檢/駕照/證照 回應 messages =====
 async function buildFitMedReply(kind, myEmpId, myData) {
-  // kind: 'fit' | 'med'
+  // kind: 'fit' | 'med' | 'lic' | 'cer'
   const role = myData.role || 'employee';
+  const meta = KIND_META[kind];
 
   // 組要塞進 bubble body 的按鈕
   const buttons = [];
@@ -358,11 +496,10 @@ async function buildFitMedReply(kind, myEmpId, myData) {
     // admin 即使沒下屬也要顯示「看全公司」按鈕
     if (hasSubordinates || role === 'admin') {
       const scope = role === 'admin' ? '全公司' : '下屬';
-      const label = kind === 'fit' ? `💪 看${scope}體能名單` : `🏥 看${scope}體檢名單`;
-      const trigger = kind === 'fit' ? '下屬體能' : '下屬體檢';
+      const label = `${meta.emoji} 看${scope}${meta.buttonLabel}名單`;
       buttons.push({
         type: 'button', style: 'primary', height: 'sm', color: COLOR.headerMenu,
-        action: { type: 'message', label, text: trigger },
+        action: { type: 'message', label, text: meta.trigger },
       });
     }
     if (role === 'admin') {
@@ -373,13 +510,15 @@ async function buildFitMedReply(kind, myEmpId, myData) {
     }
   }
 
-  const myBubble = kind === 'fit'
-    ? buildFitnessBubble(myData, buttons)
-    : buildMedicalBubble(myData, buttons);
+  let myBubble;
+  if (kind === 'fit') myBubble = buildFitnessBubble(myData, buttons);
+  else if (kind === 'med') myBubble = buildMedicalBubble(myData, buttons);
+  else if (kind === 'lic') myBubble = buildLicenseBubble(myData, buttons);
+  else if (kind === 'cer') myBubble = buildCertBubble(myData, buttons);
 
   return [{
     type: 'flex',
-    altText: kind === 'fit' ? '體能測驗' : '體檢',
+    altText: meta.altText,
     contents: myBubble,
   }];
 }
@@ -408,7 +547,7 @@ async function buildSubordinatesText(kind, myData) {
 
   if (list.length === 0) return null;
 
-  const title = kind === 'fit' ? `💪 ${scopeLabel}體能名單` : `🏥 ${scopeLabel}體檢名單`;
+  const title = `${KIND_META[kind].emoji} ${scopeLabel}${KIND_META[kind].buttonLabel}名單`;
   const lines = [title, `共 ${list.length} 人`, '─────────'];
 
   for (const e of list) {
@@ -421,11 +560,25 @@ async function buildSubordinatesText(kind, myData) {
       if (items.length) lines.push(`  項目:${items.join('、')}`);
       if (e.fitDate) lines.push(`  測驗日:${e.fitDate}`);
       if (e.fitNext) lines.push(`  下次:${e.fitNext}${daysLeftText(e.fitNext)}`);
-    } else {
+    } else if (kind === 'med') {
       if (e.medLevel) lines.push(`  等級:第 ${e.medLevel} 級`);
       else lines.push(`  ⏳ 尚未體檢`);
       if (e.medDate) lines.push(`  體檢日:${e.medDate}`);
       if (e.medNext) lines.push(`  下次:${e.medNext}${daysLeftText(e.medNext)}`);
+    } else if (kind === 'lic') {
+      const licItems = getLicensesDisplay(e);
+      if (licItems.length) {
+        licItems.forEach(item => lines.push(`  ${item}`));
+      } else {
+        lines.push('  ⏳ 尚未登錄駕照');
+      }
+    } else if (kind === 'cer') {
+      const cerItems = getCertsDisplay(e);
+      if (cerItems.length) {
+        cerItems.forEach(item => lines.push(`  ${item}`));
+      } else {
+        lines.push('  ⏳ 尚未登錄證照');
+      }
     }
     lines.push(''); // 段落空行
   }
@@ -1023,8 +1176,10 @@ async function handleTextMessage(client, event) {
     return;
   }
 
-  if (text === '體檢' || text === '體能') {
-    const kind = text === '體能' ? 'fit' : 'med';
+  // 體能/體檢/駕照/證照 - 自己查詢
+  const SELF_KIND_MAP = { '體能': 'fit', '體檢': 'med', '駕照': 'lic', '證照': 'cer' };
+  if (SELF_KIND_MAP[text]) {
+    const kind = SELF_KIND_MAP[text];
     const myEmpId = binding.empId;
     const me = await getEmployeeById(myEmpId);
     if (!me) {
@@ -1040,8 +1195,10 @@ async function handleTextMessage(client, event) {
     return;
   }
 
-  if (text === '下屬體檢' || text === '下屬體能') {
-    const kind = text === '下屬體能' ? 'fit' : 'med';
+  // 下屬名單 - manager/admin 用
+  const SUB_KIND_MAP = { '下屬體能': 'fit', '下屬體檢': 'med', '下屬駕照': 'lic', '下屬證照': 'cer' };
+  if (SUB_KIND_MAP[text]) {
+    const kind = SUB_KIND_MAP[text];
     const myEmpId = binding.empId;
     const me = await getEmployeeById(myEmpId);
     if (!me) {
