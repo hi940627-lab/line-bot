@@ -222,7 +222,7 @@ function daysLeftText(dateStr) {
 }
 
 // ===== 卡片:單人體能(內部用 bubble,carousel 也共用) =====
-function buildFitnessBubble(empData) {
+function buildFitnessBubble(empData, extraButtons = []) {
   const name = empData.name || '—';
   const fitItems = getFitItems(empData);
   const status = empData.fitResult === 'pass' ? '✅ 通過'
@@ -242,6 +242,14 @@ function buildFitnessBubble(empData) {
     rows.push({ type: 'text', text: `下次:${empData.fitNext}${daysLeftText(empData.fitNext)}`, size: 'sm', wrap: true, margin: 'sm', color: '#666666' });
   }
 
+  // 加按鈕(可選)
+  if (extraButtons.length > 0) {
+    rows.push({ type: 'separator', margin: 'lg' });
+    extraButtons.forEach(btn => {
+      rows.push({ ...btn, margin: 'md' });
+    });
+  }
+
   return {
     type: 'bubble',
     header: {
@@ -258,7 +266,7 @@ function buildFitnessBubble(empData) {
 }
 
 // ===== 卡片:單人體檢 =====
-function buildMedicalBubble(empData) {
+function buildMedicalBubble(empData, extraButtons = []) {
   const name = empData.name || '—';
   const hasAny = empData.medLevel || empData.medDate || empData.medNext;
 
@@ -275,6 +283,14 @@ function buildMedicalBubble(empData) {
     if (empData.medNext) {
       rows.push({ type: 'text', text: `下次:${empData.medNext}${daysLeftText(empData.medNext)}`, size: 'sm', wrap: true, margin: 'sm', color: '#666666' });
     }
+  }
+
+  // 加按鈕(可選)
+  if (extraButtons.length > 0) {
+    rows.push({ type: 'separator', margin: 'lg' });
+    extraButtons.forEach(btn => {
+      rows.push({ ...btn, margin: 'md' });
+    });
   }
 
   return {
@@ -329,42 +345,42 @@ function buildAdminLiffEntryFlex() {
 async function buildFitMedReply(kind, myEmpId, myData) {
   // kind: 'fit' | 'med'
   const role = myData.role || 'employee';
-  const myBubble = kind === 'fit' ? buildFitnessBubble(myData) : buildMedicalBubble(myData);
 
-  // employee: 只回自己
-  if (role === 'employee') {
-    return [{
-      type: 'flex',
-      altText: kind === 'fit' ? '體能測驗' : '體檢',
-      contents: myBubble,
-    }];
-  }
+  // 組要塞進 bubble body 的按鈕
+  const buttons = [];
 
-  // manager / admin: 自己 + (有下屬時) 看下屬按鈕 + (admin) 進 HR 按鈕
-  // 先查有沒有下屬,決定要不要放「看下屬」按鈕
-  const subSnap = await db.collection('employees')
-    .where('supervisor', '==', myData.name || '')
-    .get();
-  const hasSubordinates = subSnap.docs.some(d => d.data().status === 'active');
-
-  const bubbles = [myBubble];
-  if (hasSubordinates || role === 'admin') {
+  // manager / admin: 查有沒有下屬,決定要不要放「看下屬」按鈕
+  if (role === 'manager' || role === 'admin') {
+    const subSnap = await db.collection('employees')
+      .where('supervisor', '==', myData.name || '')
+      .get();
+    const hasSubordinates = subSnap.docs.some(d => d.data().status === 'active');
     // admin 即使沒下屬也要顯示「看全公司」按鈕
-    bubbles.push(buildSubordinatesEntryFlex(kind, role));
-  }
-  if (role === 'admin') {
-    bubbles.push(buildAdminLiffEntryFlex());
+    if (hasSubordinates || role === 'admin') {
+      const scope = role === 'admin' ? '全公司' : '下屬';
+      const label = kind === 'fit' ? `💪 看${scope}體能名單` : `🏥 看${scope}體檢名單`;
+      const trigger = kind === 'fit' ? '下屬體能' : '下屬體檢';
+      buttons.push({
+        type: 'button', style: 'primary', height: 'sm', color: COLOR.headerMenu,
+        action: { type: 'message', label, text: trigger },
+      });
+    }
+    if (role === 'admin') {
+      buttons.push({
+        type: 'button', style: 'primary', height: 'sm', color: COLOR.headerSelect,
+        action: { type: 'uri', label: '📋 進 HR 看完整名單', uri: 'https://liff.line.me/2010216136-ErHg7td7' },
+      });
+    }
   }
 
-  // 單一 bubble 不用 carousel(LINE 對單 bubble 包 carousel 會報錯)
-  const contents = bubbles.length === 1
-    ? bubbles[0]
-    : { type: 'carousel', contents: bubbles };
+  const myBubble = kind === 'fit'
+    ? buildFitnessBubble(myData, buttons)
+    : buildMedicalBubble(myData, buttons);
 
   return [{
     type: 'flex',
     altText: kind === 'fit' ? '體能測驗' : '體檢',
-    contents,
+    contents: myBubble,
   }];
 }
 
