@@ -195,10 +195,12 @@ function buildLiffEntryFlex() {
         ],
       },
       body: {
-        type: 'box', layout: 'vertical', paddingAll: '16px',
+        type: 'box', layout: 'vertical', paddingAll: '16px', spacing: 'sm',
         contents: [
           { type: 'button', style: 'primary', color: COLOR.submit,
             action: { type: 'uri', label: '🔑 進入系統', uri: 'https://liff.line.me/2010216136-ErHg7td7' } },
+          { type: 'button', style: 'secondary', height: 'sm',
+            action: { type: 'message', label: '📋 返回主選單', text: '選單' } },
         ],
       },
     },
@@ -511,6 +513,12 @@ async function buildFitMedReply(kind, myEmpId, myData) {
     }
   }
 
+  // 所有卡片都加「返回主選單」
+  buttons.push({
+    type: 'button', style: 'secondary', height: 'sm',
+    action: { type: 'message', label: '📋 返回主選單', text: '選單' },
+  });
+
   let myBubble;
   if (kind === 'fit') myBubble = buildFitnessBubble(myData, buttons);
   else if (kind === 'med') myBubble = buildMedicalBubble(myData, buttons);
@@ -771,6 +779,13 @@ function buildResultFlex(requestData, approved) {
             { type: 'text', text: '📆 天數', size: 'xs', color: '#888888' },
             { type: 'text', text: `${requestData.days} 天`, size: 'md', weight: 'bold' },
           ]},
+        ],
+      },
+      footer: {
+        type: 'box', layout: 'vertical', paddingAll: '12px',
+        contents: [
+          { type: 'button', style: 'secondary', height: 'sm',
+            action: { type: 'message', label: '📋 返回主選單', text: '選單' } },
         ],
       },
     },
