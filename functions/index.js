@@ -64,8 +64,7 @@ const MAIN_QUICK_REPLY = {
     { type: 'action', action: { type: 'message', label: '📝 請假', text: '請假' } },
     { type: 'action', action: { type: 'message', label: '🏥 體檢', text: '體檢' } },
     { type: 'action', action: { type: 'message', label: '💪 體能', text: '體能' } },
-    { type: 'action', action: { type: 'message', label: '🚗 駕照', text: '駕照' } },
-    { type: 'action', action: { type: 'message', label: '📜 證照', text: '證照' } },
+    { type: 'action', action: { type: 'message', label: '📢 公佈欄', text: '公佈欄' } },
     { type: 'action', action: { type: 'message', label: '📋 主選單', text: '選單' } },
   ],
 };
@@ -172,6 +171,8 @@ function buildMainMenuFlex(employeeName) {
             action: { type: 'message', label: '🚗 駕照', text: '駕照' } },
           { type: 'button', style: 'primary', color: COLOR.headerMenu,
             action: { type: 'message', label: '📜 證照', text: '證照' } },
+          { type: 'button', style: 'secondary',
+            action: { type: 'message', label: '📢 公佈欄', text: '公佈欄' } },
         ],
       },
     },
@@ -1219,6 +1220,28 @@ async function handleTextMessage(client, event) {
     return;
   }
 
+  // 公佈欄查詢
+  if (['公佈欄', '最新公告', '公告'].includes(text)) {
+    const annSnap = await db.collection('announcements')
+      .orderBy('createdAt', 'desc').limit(5).get();
+    if (annSnap.empty) {
+      await replyText(client, event.replyToken, '📢 目前沒有公告');
+      return;
+    }
+    let msg = '📢 最新公告\n' + '─'.repeat(14) + '\n';
+    annSnap.docs.forEach((d, i) => {
+      const r = d.data();
+      const ts = r.createdAt?.toDate?.();
+      const dateStr = ts ? `${ts.getMonth()+1}/${ts.getDate()}` : '';
+      msg += `\n${i+1}. ${r.title}`;
+      if (r.content) msg += `\n   ${r.content.substring(0, 60)}${r.content.length > 60 ? '…' : ''}`;
+      if (dateStr) msg += `\n   📅 ${dateStr}`;
+      msg += '\n';
+    });
+    await replyText(client, event.replyToken, msg.trim());
+    return;
+  }
+
   if (text === '請假' || text === '我要請假') {
     return startLeaveFlow(client, event.replyToken, bindingRef);
   }
@@ -1512,3 +1535,4 @@ exports.dailyFitMedReminder = onRequest({ region: 'asia-east1' }, async (req, re
   console.log('[dailyFitMedReminder] 完成:', JSON.stringify(summary));
   res.json(summary);
 });
+
