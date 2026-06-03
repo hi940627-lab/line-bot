@@ -1237,35 +1237,32 @@ async function handleTextMessage(client, event) {
     return;
   }
 
-  // 我的假單（員工自查）
-  if (['假單', '我的假單', '假單狀態'].includes(text)) {
+  // 我的假單 + 本週休假（合併）
+  if (['本週休假', '休假', '誰休假', '假單', '我的假單', '假單狀態'].includes(text)) {
     const empId = bindingRef.data().empId;
-    const snap = await db.collection('leaves')
-      .where('empId', '==', empId)
-      .orderBy('createdAt', 'desc').limit(5).get();
-    if (snap.empty) {
-      await replyText(client, event.replyToken, '📋 您目前沒有假單紀錄');
-      return;
-    }
     const STATUS_ICON = { approved: '✅', pending: '⏳', rejected: '❌', cancelled: '🚫' };
     const STATUS_TEXT = { approved: '已核准', pending: '待審核', rejected: '已駁回', cancelled: '已取消' };
-    let msg = '📋 我的假單（最近 5 筆）\n' + '─'.repeat(14);
-    snap.docs.forEach((d, i) => {
-      const l = d.data();
-      const typeZh = Object.keys(LEAVE_TYPE_TO_KEY).find(k => LEAVE_TYPE_TO_KEY[k] === l.type) || l.type;
-      const t = findLeaveType(typeZh);
-      const ico = STATUS_ICON[l.status] || '❓';
-      const stxt = STATUS_TEXT[l.status] || l.status;
-      msg += `\n\n${i+1}. ${ico} ${stxt}`;
-      msg += `\n   ${t ? t.emoji + ' ' : ''}${typeZh}`;
-      msg += `\n   📅 ${l.startDate} ~ ${l.endDate}`;
-    });
-    await replyText(client, event.replyToken, msg.trim());
-    return;
-  }
+    let msg = '';
 
-  // 本週休假
-  if (['本週休假', '休假', '誰休假'].includes(text)) {
+    // ── 我的假單 ──
+    const mySnap = await db.collection('leaves')
+      .where('empId', '==', empId)
+      .orderBy('createdAt', 'desc').limit(3).get();
+    if (!mySnap.empty) {
+      msg += '📋 我的假單\n' + '─'.repeat(14);
+      mySnap.docs.forEach((d, i) => {
+        const l = d.data();
+        const typeZh = Object.keys(LEAVE_TYPE_TO_KEY).find(k => LEAVE_TYPE_TO_KEY[k] === l.type) || l.type;
+        const t = findLeaveType(typeZh);
+        const ico = STATUS_ICON[l.status] || '❓';
+        const stxt = STATUS_TEXT[l.status] || l.status;
+        const dateRange = l.startDate === l.endDate ? l.startDate : `${l.startDate}~${l.endDate}`;
+        msg += `\n${i+1}. ${ico} ${stxt} ${t ? t.emoji : ''}${typeZh} ${dateRange}`;
+      });
+      msg += '\n\n';
+    }
+
+    // ── 本週休假 ──
     const now = new Date();
     const dayOfWeek = now.getDay();
     const monday = new Date(now);
@@ -1277,31 +1274,29 @@ async function handleTextMessage(client, event) {
     const monDisplay = `${monday.getMonth()+1}/${monday.getDate()}`;
     const sunDisplay = `${sunday.getMonth()+1}/${sunday.getDate()}`;
 
-    // 撈本週有交集的假單
     const snap = await db.collection('leaves')
       .where('startDate', '<=', sunStr).get();
-    const STATUS_ICON = { approved: '✅', pending: '⏳', rejected: '❌', cancelled: '🚫' };
     const leaves = snap.docs
       .map(d => d.data())
       .filter(l => l.endDate >= monStr && l.status !== 'cancelled')
       .sort((a, b) => a.startDate.localeCompare(b.startDate));
 
+    msg += `📅 本週休假（${monDisplay}-${sunDisplay}）\n` + '─'.repeat(14);
     if (leaves.length === 0) {
-      await replyText(client, event.replyToken, `🎉 本週（${monDisplay}-${sunDisplay}）無人休假`);
-      return;
+      msg += '\n🎉 本週無人休假';
+    } else {
+      leaves.forEach(l => {
+        const typeZh = Object.keys(LEAVE_TYPE_TO_KEY).find(k => LEAVE_TYPE_TO_KEY[k] === l.type) || l.type;
+        const t = findLeaveType(typeZh);
+        const ico = STATUS_ICON[l.status] || '';
+        const dateRange = l.startDate === l.endDate
+          ? formatDateWithWeekday(l.startDate)
+          : `${l.startDate}~${l.endDate}`;
+        msg += `\n${ico} ${l.empName || '—'} ${t ? t.emoji : ''}${typeZh} ${dateRange}`;
+      });
+      msg += `\n\n共 ${leaves.length} 人`;
     }
 
-    let msg = `📅 本週休假（${monDisplay}-${sunDisplay}）\n` + '─'.repeat(14);
-    leaves.forEach(l => {
-      const typeZh = Object.keys(LEAVE_TYPE_TO_KEY).find(k => LEAVE_TYPE_TO_KEY[k] === l.type) || l.type;
-      const t = findLeaveType(typeZh);
-      const ico = STATUS_ICON[l.status] || '';
-      const dateRange = l.startDate === l.endDate
-        ? formatDateWithWeekday(l.startDate)
-        : `${l.startDate} ~ ${l.endDate}`;
-      msg += `\n${ico} ${l.empName || '—'} ${t ? t.emoji : ''}${typeZh}`;
-      msg += `\n   📅 ${dateRange}`;
-    });
     await replyText(client, event.replyToken, msg.trim());
     return;
   }
