@@ -1245,56 +1245,68 @@ async function handleTextMessage(client, event) {
     let msg = '';
 
     // ── 我的假單 ──
-    const mySnap = await db.collection('leaves')
-      .where('empId', '==', empId)
-      .orderBy('createdAt', 'desc').limit(3).get();
-    if (!mySnap.empty) {
-      msg += '📋 我的假單\n' + '─'.repeat(14);
-      mySnap.docs.forEach((d, i) => {
-        const l = d.data();
-        const typeZh = Object.keys(LEAVE_TYPE_TO_KEY).find(k => LEAVE_TYPE_TO_KEY[k] === l.type) || l.type;
-        const t = findLeaveType(typeZh);
-        const ico = STATUS_ICON[l.status] || '❓';
-        const stxt = STATUS_TEXT[l.status] || l.status;
-        const dateRange = l.startDate === l.endDate ? l.startDate : `${l.startDate}~${l.endDate}`;
-        msg += `\n${i+1}. ${ico} ${stxt} ${t ? t.emoji : ''}${typeZh} ${dateRange}`;
-      });
-      msg += '\n\n';
-    }
+    try {
+      const mySnap = await db.collection('leaves')
+        .where('empId', '==', empId).get();
+      if (!mySnap.empty) {
+        const myLeaves = mySnap.docs
+          .map(d => d.data())
+          .sort((a, b) => {
+            const ta = a.createdAt?.toDate?.()?.getTime() || 0;
+            const tb = b.createdAt?.toDate?.()?.getTime() || 0;
+            return tb - ta;
+          })
+          .slice(0, 3);
+        msg += '📋 我的假單\n' + '─'.repeat(14);
+        myLeaves.forEach((l, i) => {
+          const typeZh = Object.keys(LEAVE_TYPE_TO_KEY).find(k => LEAVE_TYPE_TO_KEY[k] === l.type) || l.type;
+          const t = findLeaveType(typeZh);
+          const ico = STATUS_ICON[l.status] || '❓';
+          const stxt = STATUS_TEXT[l.status] || l.status;
+          const dateRange = l.startDate === l.endDate ? l.startDate : `${l.startDate}~${l.endDate}`;
+          msg += `\n${i+1}. ${ico} ${stxt} ${t ? t.emoji : ''}${typeZh} ${dateRange}`;
+        });
+        msg += '\n\n';
+      }
+    } catch(e) { console.error('[Bot] myLeaves error:', e.message); }
 
     // ── 本週休假 ──
-    const now = new Date();
-    const dayOfWeek = now.getDay();
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
-    const sunday = new Date(monday);
-    sunday.setDate(monday.getDate() + 6);
-    const monStr = monday.toISOString().slice(0, 10);
-    const sunStr = sunday.toISOString().slice(0, 10);
-    const monDisplay = `${monday.getMonth()+1}/${monday.getDate()}`;
-    const sunDisplay = `${sunday.getMonth()+1}/${sunday.getDate()}`;
+    try {
+      const now = new Date();
+      const dayOfWeek = now.getDay();
+      const monday = new Date(now);
+      monday.setDate(now.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      const monStr = monday.toISOString().slice(0, 10);
+      const sunStr = sunday.toISOString().slice(0, 10);
+      const monDisplay = `${monday.getMonth()+1}/${monday.getDate()}`;
+      const sunDisplay = `${sunday.getMonth()+1}/${sunday.getDate()}`;
 
-    const snap = await db.collection('leaves')
-      .where('startDate', '<=', sunStr).get();
-    const leaves = snap.docs
-      .map(d => d.data())
-      .filter(l => l.endDate >= monStr && l.status !== 'cancelled')
-      .sort((a, b) => a.startDate.localeCompare(b.startDate));
+      const snap = await db.collection('leaves').get();
+      const leaves = snap.docs
+        .map(d => d.data())
+        .filter(l => l.startDate <= sunStr && l.endDate >= monStr && l.status !== 'cancelled')
+        .sort((a, b) => a.startDate.localeCompare(b.startDate));
 
-    msg += `📅 本週休假（${monDisplay}-${sunDisplay}）\n` + '─'.repeat(14);
-    if (leaves.length === 0) {
-      msg += '\n🎉 本週無人休假';
-    } else {
-      leaves.forEach(l => {
-        const typeZh = Object.keys(LEAVE_TYPE_TO_KEY).find(k => LEAVE_TYPE_TO_KEY[k] === l.type) || l.type;
-        const t = findLeaveType(typeZh);
-        const ico = STATUS_ICON[l.status] || '';
-        const dateRange = l.startDate === l.endDate
-          ? formatDateWithWeekday(l.startDate)
-          : `${l.startDate}~${l.endDate}`;
-        msg += `\n${ico} ${l.empName || '—'} ${t ? t.emoji : ''}${typeZh} ${dateRange}`;
-      });
-      msg += `\n\n共 ${leaves.length} 人`;
+      msg += `📅 本週休假（${monDisplay}-${sunDisplay}）\n` + '─'.repeat(14);
+      if (leaves.length === 0) {
+        msg += '\n🎉 本週無人休假';
+      } else {
+        leaves.forEach(l => {
+          const typeZh = Object.keys(LEAVE_TYPE_TO_KEY).find(k => LEAVE_TYPE_TO_KEY[k] === l.type) || l.type;
+          const t = findLeaveType(typeZh);
+          const ico = STATUS_ICON[l.status] || '';
+          const dateRange = l.startDate === l.endDate
+            ? formatDateWithWeekday(l.startDate)
+            : `${l.startDate}~${l.endDate}`;
+          msg += `\n${ico} ${l.empName || '—'} ${t ? t.emoji : ''}${typeZh} ${dateRange}`;
+        });
+        msg += `\n\n共 ${leaves.length} 人`;
+      }
+    } catch(e) { 
+      msg += `📅 本週休假\n` + '─'.repeat(14) + '\n⚠️ 查詢失敗';
+      console.error('[Bot] weekLeaves error:', e.message); 
     }
 
     await replyText(client, event.replyToken, msg.trim());
