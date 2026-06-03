@@ -1237,71 +1237,78 @@ async function handleTextMessage(client, event) {
     return;
   }
 
-  // 我的假單（員工自查）
-  if (['假單', '我的假單', '假單狀態'].includes(text)) {
+  // 我的假單 + 本週休假（合併）
+  if (['本週休假', '休假', '誰休假', '假單', '我的假單', '假單狀態'].includes(text)) {
     const empId = bindingRef.data().empId;
-    const snap = await db.collection('leaves')
-      .where('empId', '==', empId)
-      .orderBy('createdAt', 'desc').limit(5).get();
-    if (snap.empty) {
-      await replyText(client, event.replyToken, '📋 您目前沒有假單紀錄');
-      return;
-    }
     const STATUS_ICON = { approved: '✅', pending: '⏳', rejected: '❌', cancelled: '🚫' };
     const STATUS_TEXT = { approved: '已核准', pending: '待審核', rejected: '已駁回', cancelled: '已取消' };
-    let msg = '📋 我的假單（最近 5 筆）\n' + '─'.repeat(14);
-    snap.docs.forEach((d, i) => {
-      const l = d.data();
-      const typeZh = Object.keys(LEAVE_TYPE_TO_KEY).find(k => LEAVE_TYPE_TO_KEY[k] === l.type) || l.type;
-      const t = findLeaveType(typeZh);
-      const ico = STATUS_ICON[l.status] || '❓';
-      const stxt = STATUS_TEXT[l.status] || l.status;
-      msg += `\n\n${i+1}. ${ico} ${stxt}`;
-      msg += `\n   ${t ? t.emoji + ' ' : ''}${typeZh}`;
-      msg += `\n   📅 ${l.startDate} ~ ${l.endDate}`;
-    });
-    await replyText(client, event.replyToken, msg.trim());
-    return;
-  }
+    let msg = '';
 
-  // 本週休假
-  if (['本週休假', '休假', '誰休假'].includes(text)) {
-    const now = new Date();
-    const dayOfWeek = now.getDay();
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
-    const sunday = new Date(monday);
-    sunday.setDate(monday.getDate() + 6);
-    const monStr = monday.toISOString().slice(0, 10);
-    const sunStr = sunday.toISOString().slice(0, 10);
-    const monDisplay = `${monday.getMonth()+1}/${monday.getDate()}`;
-    const sunDisplay = `${sunday.getMonth()+1}/${sunday.getDate()}`;
+    // ── 我的假單 ──
+    try {
+      const mySnap = await db.collection('leaves')
+        .where('empId', '==', empId).get();
+      if (!mySnap.empty) {
+        const myLeaves = mySnap.docs
+          .map(d => d.data())
+          .sort((a, b) => {
+            const ta = a.createdAt?.toDate?.()?.getTime() || 0;
+            const tb = b.createdAt?.toDate?.()?.getTime() || 0;
+            return tb - ta;
+          })
+          .slice(0, 3);
+        msg += '📋 我的假單\n' + '─'.repeat(14);
+        myLeaves.forEach((l, i) => {
+          const typeZh = Object.keys(LEAVE_TYPE_TO_KEY).find(k => LEAVE_TYPE_TO_KEY[k] === l.type) || l.type;
+          const t = findLeaveType(typeZh);
+          const ico = STATUS_ICON[l.status] || '❓';
+          const stxt = STATUS_TEXT[l.status] || l.status;
+          const dateRange = l.startDate === l.endDate ? l.startDate : `${l.startDate}~${l.endDate}`;
+          msg += `\n${i+1}. ${ico} ${stxt} ${t ? t.emoji : ''}${typeZh} ${dateRange}`;
+        });
+        msg += '\n\n';
+      }
+    } catch(e) { console.error('[Bot] myLeaves error:', e.message); }
 
-    // 撈本週有交集的假單
-    const snap = await db.collection('leaves')
-      .where('startDate', '<=', sunStr).get();
-    const STATUS_ICON = { approved: '✅', pending: '⏳', rejected: '❌', cancelled: '🚫' };
-    const leaves = snap.docs
-      .map(d => d.data())
-      .filter(l => l.endDate >= monStr && l.status !== 'cancelled')
-      .sort((a, b) => a.startDate.localeCompare(b.startDate));
+    // ── 本週休假 ──
+    try {
+      const now = new Date();
+      const dayOfWeek = now.getDay();
+      const monday = new Date(now);
+      monday.setDate(now.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      const monStr = monday.toISOString().slice(0, 10);
+      const sunStr = sunday.toISOString().slice(0, 10);
+      const monDisplay = `${monday.getMonth()+1}/${monday.getDate()}`;
+      const sunDisplay = `${sunday.getMonth()+1}/${sunday.getDate()}`;
 
-    if (leaves.length === 0) {
-      await replyText(client, event.replyToken, `🎉 本週（${monDisplay}-${sunDisplay}）無人休假`);
-      return;
+      const snap = await db.collection('leaves').get();
+      const leaves = snap.docs
+        .map(d => d.data())
+        .filter(l => l.startDate <= sunStr && l.endDate >= monStr && l.status !== 'cancelled')
+        .sort((a, b) => a.startDate.localeCompare(b.startDate));
+
+      msg += `📅 本週休假（${monDisplay}-${sunDisplay}）\n` + '─'.repeat(14);
+      if (leaves.length === 0) {
+        msg += '\n🎉 本週無人休假';
+      } else {
+        leaves.forEach(l => {
+          const typeZh = Object.keys(LEAVE_TYPE_TO_KEY).find(k => LEAVE_TYPE_TO_KEY[k] === l.type) || l.type;
+          const t = findLeaveType(typeZh);
+          const ico = STATUS_ICON[l.status] || '';
+          const dateRange = l.startDate === l.endDate
+            ? formatDateWithWeekday(l.startDate)
+            : `${l.startDate}~${l.endDate}`;
+          msg += `\n${ico} ${l.empName || '—'} ${t ? t.emoji : ''}${typeZh} ${dateRange}`;
+        });
+        msg += `\n\n共 ${leaves.length} 人`;
+      }
+    } catch(e) {
+      msg += `📅 本週休假\n` + '─'.repeat(14) + '\n⚠️ 查詢失敗';
+      console.error('[Bot] weekLeaves error:', e.message);
     }
 
-    let msg = `📅 本週休假（${monDisplay}-${sunDisplay}）\n` + '─'.repeat(14);
-    leaves.forEach(l => {
-      const typeZh = Object.keys(LEAVE_TYPE_TO_KEY).find(k => LEAVE_TYPE_TO_KEY[k] === l.type) || l.type;
-      const t = findLeaveType(typeZh);
-      const ico = STATUS_ICON[l.status] || '';
-      const dateRange = l.startDate === l.endDate
-        ? formatDateWithWeekday(l.startDate)
-        : `${l.startDate} ~ ${l.endDate}`;
-      msg += `\n${ico} ${l.empName || '—'} ${t ? t.emoji : ''}${typeZh}`;
-      msg += `\n   📅 ${dateRange}`;
-    });
     await replyText(client, event.replyToken, msg.trim());
     return;
   }
